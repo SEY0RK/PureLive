@@ -55,7 +55,7 @@ void main() {
     );
     const cutout = DisplayFeature(
       type: DisplayFeatureType.cutout,
-      state: DisplayFeatureState.postureFlat,
+      state: DisplayFeatureState.unknown,
       bounds: Rect.fromLTWH(0, 0, 30, 20),
     );
 
@@ -83,7 +83,7 @@ void main() {
         RoomPageLayout.wide,
       );
       expect(
-        roomPageLayout(width: 730, height: 773, portraitPanel: false, unfoldedFoldable: true, portraitStream: false),
+        roomPageLayout(width: 730, height: 773, portraitPanel: false, unfoldedFoldable: true),
         RoomPageLayout.phone,
         reason: 'a 16:9 source keeps the stack, where it is larger',
       );
