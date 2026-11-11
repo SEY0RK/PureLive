@@ -75,9 +75,11 @@ patch(
   }
   if (width >= roomWideMinWidth) return RoomPageLayout.wide;
   // A07.5 c9: an unfolded foldable's inner screen is 600-839 wide, below the
-  // 840 rule. It splits for a portrait stream, whose picture then uses the
-  // column's full height; a 16:9 stream keeps the stack, where it is larger.
-  if (unfoldedFoldable && width >= roomFoldableSplitMinWidth && portraitStream) {
+  // 840 rule. Held sideways the window is wide and shallow, so the chat
+  // column keeps its full height for either source and the stacked chat is
+  // left a few dozen pixels (A07.5 c9b). Upright, only a portrait stream uses
+  // that height; a 16:9 stream keeps the stack, where its picture is larger.
+  if (unfoldedFoldable && width >= roomFoldableSplitMinWidth && (width > height || portraitStream)) {
     return RoomPageLayout.wide;
   }
   return portraitPanel ? RoomPageLayout.portraitPanel : RoomPageLayout.phone;
