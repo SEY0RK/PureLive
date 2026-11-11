@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""The 5.6.5 layout fixes, applied in place to a checkout.
+
+Every anchor must match exactly once; the script stops otherwise. Re-running
+is a no-op: each edit carries a marker that is checked first, so a branch that
+already carries the change can be pushed again.
+"""
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+LAYOUT = "apps/pure_live/lib/features/live_play/logic/room_layout.dart"
+PAGE = "apps/pure_live/lib/features/live_play/live_play_page.dart"
+GRADLE = "apps/pure_live/android/app/build.gradle.kts"
+
+
+def fail(message):
+    print(f"patch_565_layout: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def patch(rel, old, new, marker):
+    path = ROOT / rel
+    if not path.is_file():
+        fail(f"{rel}: missing")
+    text = path.read_text(encoding="utf-8")
+    if marker in text:
+        print(f"skip  {rel}  {marker[:56]!r}")
+        return
+    count = text.count(old)
+    if count != 1:
+        fail(f"{rel}: anchor matched {count} times, expected 1:\n---\n{old}\n---")
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    print(f"patch {rel}  {marker[:56]!r}")
+
+
+# ---------------------------------------------------------------- room_layout
+
+patch(
+    LAYOUT,
+    "import 'dart:math' as math;\n\nimport 'package:live_ui/live_ui.dart' show AppMotion, windowCompactHeight;",
+    "import 'dart:math' as math;\n"
+    "import 'dart:ui' show DisplayFeature, DisplayFeatureState, DisplayFeatureType, Size;\n"
+    "\n"
+    "import 'package:live_ui/live_ui.dart' show AppMotion, windowCompactHeight;",
+    "import 'dart:ui' show DisplayFeature",
+)
+
+patch(
+    LAYOUT,
+    """RoomPageLayout roomPageLayout({
+  required double width,
+  required double height,
+  required bool portraitPanel,
+  bool mobile = true,
+}) {
+  if (height < roomCompactMaxHeight && width > height && width >= 600) {
+    return mobile ? RoomPageLayout.landscape : RoomPageLayout.wide;
+  }
+  if (width >= roomWideMinWidth) return RoomPageLayout.wide;
+  return portraitPanel ? RoomPageLayout.portraitPanel : RoomPageLayout.phone;
+}""",
+    """RoomPageLayout roomPageLayout({
+  required double width,
+  required double height,
+  required bool portraitPanel,
+  bool mobile = true,
+  bool unfoldedFoldable = false,
+  bool portraitStream = false,
+}) {
+  if (height < roomCompactMaxHeight && width > height && width >= 600) {
+    return mobile ? RoomPageLayout.landscape : RoomPageLayout.wide;
+  }
+  if (width >= roomWideMinWidth) return RoomPageLayout.wide;
+  // A07.5 c9: an unfolded foldable's inner screen is 600-839 wide, below the
+  // 840 rule. It splits for a portrait stream, whose picture then uses the
+  // column's full height; a 16:9 stream keeps the stack, where it is larger.
+  if (unfoldedFoldable && width >= roomFoldableSplitMinWidth && portraitStream) {
+    return RoomPageLayout.wide;
+  }
+  return portraitPanel ? RoomPageLayout.portraitPanel : RoomPageLayout.phone;
+}""",
+    "bool unfoldedFoldable = false,",
+)
+
+patch(
+    LAYOUT,
+    "/// The width of the wide room's chat column (3.x: 34 % of the window, 300 to\n"
+    "/// 400; U.2d choice H3).\n"
+    "double chatColumnWidth(double width) => (width * 0.34).clamp(300.0, 400.0);",
+    """/// The width of the wide room's chat column (3.x: 34 % of the window, 300 to
+/// 400; U.2d choice H3).
+double chatColumnWidth(double width) => (width * 0.34).clamp(300.0, 400.0);
+
+/// The share of the page the stacked picture may take: 5.x clamped its 16:9
+/// box to 60 % of the height, and the source-shaped box keeps that ceiling.
+const double phonePictureShare = 0.6;
+
+/// The least width that lets an unfolded foldable split (A07.5 c9): a
+/// book-style foldable's inner screen is 600-839 wide, below
+/// [roomWideMinWidth]; an ordinary window keeps the 840 rule.
+const double roomFoldableSplitMinWidth = 600;
+
+/// The height of the picture box above the chat ([RoomPageLayout.phone]): the
+/// source's own shape at the full width, at most [share] of [height].
+///
+/// 3.x `resolveCompatibilityVideoHeight`: a fixed 16:9 box left a 9:16 source
+/// a strip in the middle with black bands above and below (Issue #927). A
+/// landscape source still gets its plain 16:9 box, and an unknown
+/// [aspectRatio] falls back to it, so nothing moves before the first frame.
+double phonePictureHeight({
+  required double width,
+  required double height,
+  double? aspectRatio,
+  double share = phonePictureShare,
+}) {
+  if (!width.isFinite || width <= 0) return 0;
+  final ratio = aspectRatio != null && aspectRatio.isFinite && aspectRatio > 0 ? aspectRatio : 16 / 9;
+  final natural = width / ratio;
+  if (!height.isFinite) return natural;
+  if (height <= 0) return 0;
+  return natural.clamp(0.0, height * share.clamp(0.0, 1.0));
+}
+
+/// Whether [features] report an unfolded foldable: a fold or a hinge that is
+/// flat (fully open) or half open. A cut-out never counts.
+///
+/// [DisplayHinge.find] cannot answer this: a flat fold's bounds have no
+/// width, and it skips those.
+bool unfoldedFoldable(Iterable<DisplayFeature> features) {
+  for (final feature in features) {
+    if (feature.type == DisplayFeatureType.cutout) continue;
+    if (feature.state == DisplayFeatureState.postureFlat ||
+        feature.state == DisplayFeatureState.postureHalfOpened) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Whether the window is a foldable's open inner screen (A07.5 c9): the system
+/// reports a fold or a hinge, or, on a phone or tablet, the window is nearly
+/// square — 600-839 wide and at most 1.25 times as tall. No ordinary phone or
+/// tablet in portrait is (720 x 1000 is 1.39, 800 x 1280 is 1.6), while a
+/// book-style foldable's inner screen is (673 x 841 is 1.25). The fallback
+/// covers a device that reports no display feature at all.
+bool foldableWindow({
+  required Size size,
+  required Iterable<DisplayFeature> features,
+  required bool mobile,
+}) {
+  if (unfoldedFoldable(features)) return true;
+  if (!mobile || !size.width.isFinite || !size.height.isFinite) return false;
+  if (size.width < roomFoldableSplitMinWidth || size.width >= roomWideMinWidth) return false;
+  if (size.height < size.width) return false;
+  return size.height / size.width <= 1.25;
+}""",
+    "double phonePictureHeight(",
+)
+
+# --------------------------------------------------------------- live_play_page
+
+patch(
+    PAGE,
+    """  /// What the player found, or before the first frame what the platform
+  /// declared: a portrait picture.
+  final ValueNotifier<bool> _detectedPortrait = ValueNotifier(false);""",
+    """  /// What the player found, or before the first frame what the platform
+  /// declared: a portrait picture.
+  final ValueNotifier<bool> _detectedPortrait = ValueNotifier(false);
+
+  /// The picture's shape (width over height): the decoder's, or before the
+  /// first frame what the platform declared for the line (F.1b). The stacked
+  /// picture keeps the source's shape (A07.2); null until either is known.
+  final ValueNotifier<double?> _detectedAspect = ValueNotifier(null);
+
+  /// The stacked picture follows the source's shape instead of a fixed 16:9
+  /// box ("兼容 16:9" on a 9:16 stream, Issue #927). Off returns to 5.6.5.
+  static const bool phonePictureFollowsSource = true;
+
+  /// An unfolded foldable splits from [roomFoldableSplitMinWidth] for a
+  /// portrait stream (A07.5 c9). Off returns to 5.6.5's 840 only.
+  static const bool foldableSplitsFrom600 = true;""",
+    "final ValueNotifier<double?> _detectedAspect",
+)
+
+patch(
+    PAGE,
+    """    _detectedPortrait.value = session.state.expectsPortrait;
+    _shape = session.states.listen((state) {
+      if (state.expectsPortrait != _detectedPortrait.value) _detectedPortrait.value = state.expectsPortrait;
+    });""",
+    """    _detectedPortrait.value = session.state.expectsPortrait;
+    _detectedAspect.value = session.state.expectedAspectRatio;
+    _shape = session.states.listen((state) {
+      if (state.expectsPortrait != _detectedPortrait.value) _detectedPortrait.value = state.expectsPortrait;
+      // A replay reports its position every tick while its shape changes
+      // once (the declared ratio giving way to the decoded one): only a
+      // changed shape rebuilds the page.
+      final aspect = state.expectedAspectRatio;
+      if (aspect != _detectedAspect.value) _detectedAspect.value = aspect;
+    });""",
+    "_detectedAspect.value = session.state.expectedAspectRatio;",
+)
+
+patch(
+    PAGE,
+    "                listenable: Listenable.merge([_orientation, _detectedPortrait]),",
+    "                listenable: Listenable.merge([_orientation, _detectedPortrait, _detectedAspect]),",
+    "Listenable.merge([_orientation, _detectedPortrait, _detectedAspect])",
+)
+
+patch(
+    PAGE,
+    """    _detectedPortrait.dispose();
+    _guideReveal.dispose();""",
+    """    _detectedPortrait.dispose();
+    _detectedAspect.dispose();
+    _guideReveal.dispose();""",
+    "_detectedAspect.dispose();",
+)
+
+patch(
+    PAGE,
+    """      final portrait = _portraitStream(settings);
+      // Above the Scaffold, whose body no longer sees it (A07.18).
+      final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+      final layout = roomPageLayout(
+        width: page.maxWidth,
+        height: page.maxHeight,
+        mobile: _platform.mobile,
+        portraitPanel: portraitPanelEligible(""",
+    """      final portrait = _portraitStream(settings);
+      // Above the Scaffold, whose body no longer sees it (A07.18).
+      final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+      final layout = roomPageLayout(
+        width: page.maxWidth,
+        height: page.maxHeight,
+        mobile: _platform.mobile,
+        unfoldedFoldable:
+            foldableSplitsFrom600 &&
+            foldableWindow(
+              size: Size(page.maxWidth, page.maxHeight),
+              features: MediaQuery.displayFeaturesOf(context),
+              mobile: _platform.mobile,
+            ),
+        portraitStream: portrait,
+        portraitPanel: portraitPanelEligible(""",
+    "foldableSplitsFrom600 &&",
+)
+
+patch(
+    PAGE,
+    """  Widget _phone(
+    LiveRoomController controller,
+    _LayoutSettings settings,
+    BoxConstraints constraints, {
+    double keyboard = 0,
+  }) {
+    final height = (constraints.maxWidth * 9 / 16).clamp(0.0, constraints.maxHeight * 0.6);""",
+    """  Widget _phone(
+    LiveRoomController controller,
+    _LayoutSettings settings,
+    BoxConstraints constraints, {
+    double keyboard = 0,
+  }) {
+    // The picture keeps the source's shape (A07.2): a 9:16 stream no longer
+    // sits in a 16:9 box with black bands (Issue #927). A 16:9 stream keeps
+    // exactly 5.6.5's height.
+    final height = phonePictureHeight(
+      width: constraints.maxWidth,
+      height: constraints.maxHeight,
+      aspectRatio: phonePictureFollowsSource ? _detectedAspect.value : null,
+    );""",
+    "final height = phonePictureHeight(",
+)
+
+# --------------------------------------------------------------------- gradle
+
+patch(
+    GRADLE,
+    '        applicationId = "com.mystyle.purelive"',
+    """        // The candidate build lives next to the release: it is signed with
+        // another key, so it can never update it (PURELIVE_CANDIDATE=true).
+        applicationId =
+            if (System.getenv("PURELIVE_CANDIDATE") == "true") {
+                "com.mystyle.purelive.candidate"
+            } else {
+                "com.mystyle.purelive"
+            }""",
+    "com.mystyle.purelive.candidate",
+)
+
+patch(
+    GRADLE,
+    '        manifestPlaceholders["appLabel"] = "纯粹直播"',
+    '        manifestPlaceholders["appLabel"] =\n'
+    '            if (System.getenv("PURELIVE_CANDIDATE") == "true") "纯粹直播 测试" else "纯粹直播"',
+    'System.getenv("PURELIVE_CANDIDATE") == "true") "纯粹直播 测试"',
+)
+
+print("patch_565_layout: done")
