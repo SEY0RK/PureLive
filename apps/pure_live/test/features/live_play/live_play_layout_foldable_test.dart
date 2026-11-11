@@ -102,6 +102,23 @@ void main() {
       );
     });
 
+    test('held sideways, an unfolded foldable splits for either source', () {
+      expect(
+        roomPageLayout(width: 823, height: 651, portraitPanel: false, unfoldedFoldable: true),
+        RoomPageLayout.wide,
+        reason: 'a 16:9 stream: the chat column keeps its full height',
+      );
+      expect(
+        roomPageLayout(width: 823, height: 651, portraitPanel: false, unfoldedFoldable: true, portraitStream: true),
+        RoomPageLayout.wide,
+      );
+      expect(
+        roomPageLayout(width: 700, height: 900, portraitPanel: false, unfoldedFoldable: true),
+        RoomPageLayout.phone,
+        reason: 'upright: a 16:9 stream keeps the stack',
+      );
+    });
+
     test('the split wins over the three-stop panel on an unfolded foldable', () {
       expect(
         roomPageLayout(width: 730, height: 773, portraitPanel: true, unfoldedFoldable: true, portraitStream: true),
