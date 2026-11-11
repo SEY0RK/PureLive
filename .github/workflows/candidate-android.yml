@@ -1,0 +1,147 @@
+name: Candidate Android
+
+# Builds the 5.6.5 candidate (co-existing package, debug-class signing):
+#   * applies tools/ci/patch_565_layout.py and commits it to this branch
+#   * runs analyze and the layout tests
+#   * builds an arm64 release APK and publishes it as a pre-release
+#
+# Pushing the result back is done with GITHUB_TOKEN, which does not trigger
+# another run, so the loop stops after one pass.
+
+on:
+  push:
+    branches: ['fix/565-layout']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: candidate-android-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply the layout patch
+        run: |
+          set -euo pipefail
+          python3 tools/ci/patch_565_layout.py
+          git config user.name 'purelive-candidate'
+          git config user.email 'candidate@users.noreply.github.com'
+          if git diff --quiet; then
+            echo 'already applied, nothing to commit'
+          else
+            git add -A
+            git commit -m 'fix(live): size the stacked picture by the source and split an unfolded foldable'
+            git push
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '27'
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.8'
+          cache: true
+
+      - name: Candidate signing key
+        uses: actions/cache@v4
+        with:
+          path: apps/pure_live/android/app/candidate.jks
+          key: candidate-signing-key-v1
+
+      - name: Write key.properties
+        run: |
+          set -euo pipefail
+          key=apps/pure_live/android/app/candidate.jks
+          if [ ! -f "$key" ]; then
+            keytool -genkeypair -keystore "$key" -storepass purelive -keypass purelive \
+              -alias candidate -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname 'CN=PureLive Candidate, O=PureLive, C=CN'
+          fi
+          printf 'storeFile=candidate.jks\nstorePassword=purelive\nkeyAlias=candidate\nkeyPassword=purelive\n' \
+            > apps/pure_live/android/key.properties
+          ls -l "$key"
+
+      - name: Android SDK
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          for package in 'platforms;android-37' 'build-tools;37.0.0' 'ndk;30.0.16248370' 'cmake;4.1.2'; do
+            "$SDKMANAGER" --install "$package" > /dev/null || echo "not installed now: $package (Gradle may fetch it)"
+          done
+          "$SDKMANAGER" --list_installed | sed -n '1,40p'
+
+      - name: Packages and the recorder's FFmpeg
+        run: |
+          set -euo pipefail
+          flutter --version
+          flutter pub get --enforce-lockfile
+          bash tools/ffmpeg_kit/fetch.sh android
+
+      - name: Analyze
+        working-directory: apps/pure_live
+        run: flutter analyze
+
+      - name: New layout tests
+        working-directory: apps/pure_live
+        run: flutter test test/features/live_play/live_play_layout_foldable_test.dart
+
+      - name: Existing layout tests
+        continue-on-error: true
+        working-directory: apps/pure_live
+        run: flutter test test/features/live_play/live_play_layouts_test.dart
+
+      - name: Build the candidate APK
+        working-directory: apps/pure_live
+        env:
+          PURELIVE_CANDIDATE: 'true'
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd apps/pure_live/build/app/outputs/flutter-apk
+          ls -l
+          sha256sum *.apk > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: purelive-565-candidate
+          path: |
+            apps/pure_live/build/app/outputs/flutter-apk/*.apk
+            apps/pure_live/build/app/outputs/flutter-apk/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: candidate-565-${{ github.run_number }}
+          name: PureLive 5.6.5 candidate ${{ github.run_number }}
+          prerelease: true
+          body: |
+            5.6.5 加上两处布局修复：
+
+            - 「兼容 16:9」的竖屏画面按源比例取高，不再被压成一条
+            - 折叠屏展开后，竖屏直播从 600 宽起走左右分栏
+
+            包名 `com.mystyle.purelive.candidate`，可与正式版共存，数据互相独立。
+          files: |
+            apps/pure_live/build/app/outputs/flutter-apk/*.apk
+            apps/pure_live/build/app/outputs/flutter-apk/SHA256SUMS.txt
