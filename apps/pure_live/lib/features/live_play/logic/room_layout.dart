@@ -358,7 +358,7 @@ double phonePictureHeight({
 /// Whether [features] report an unfolded foldable: a fold or a hinge that is
 /// flat (fully open) or half open. A cut-out never counts.
 ///
-/// [DisplayHinge.find] cannot answer this: a flat fold's bounds have no
+/// DisplayHinge.find cannot answer this: a flat fold's bounds have no
 /// width, and it skips those.
 bool unfoldedFoldable(Iterable<DisplayFeature> features) {
   for (final feature in features) {
