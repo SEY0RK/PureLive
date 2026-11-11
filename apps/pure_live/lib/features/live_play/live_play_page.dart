@@ -176,6 +176,19 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
   /// declared: a portrait picture.
   final ValueNotifier<bool> _detectedPortrait = ValueNotifier(false);
 
+  /// The picture's shape (width over height): the decoder's, or before the
+  /// first frame what the platform declared for the line (F.1b). The stacked
+  /// picture keeps the source's shape (A07.2); null until either is known.
+  final ValueNotifier<double?> _detectedAspect = ValueNotifier(null);
+
+  /// The stacked picture follows the source's shape instead of a fixed 16:9
+  /// box ("兼容 16:9" on a 9:16 stream, Issue #927). Off returns to 5.6.5.
+  static const bool phonePictureFollowsSource = true;
+
+  /// An unfolded foldable splits from [roomFoldableSplitMinWidth] for a
+  /// portrait stream (A07.5 c9). Off returns to 5.6.5's 840 only.
+  static const bool foldableSplitsFrom600 = true;
+
   /// The record or danmaku settings panel (U.2f); one at a time, and not
   /// together with the details.
   final RoomPanelController _panels = RoomPanelController();
@@ -337,8 +350,14 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
     // line lays the room out (3.x `LiveStreamGeometryHint`); the decoder's
     // wins once known.
     _detectedPortrait.value = session.state.expectsPortrait;
+    _detectedAspect.value = session.state.expectedAspectRatio;
     _shape = session.states.listen((state) {
       if (state.expectsPortrait != _detectedPortrait.value) _detectedPortrait.value = state.expectsPortrait;
+      // A replay reports its position every tick while its shape changes
+      // once (the declared ratio giving way to the decoded one): only a
+      // changed shape rebuilds the page.
+      final aspect = state.expectedAspectRatio;
+      if (aspect != _detectedAspect.value) _detectedAspect.value = aspect;
     });
     final autoFullscreen =
         store.settings.get(Settings.enableFullScreenDefault) ||
@@ -681,6 +700,7 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
     _swipe.dispose();
     _switchGroup.dispose();
     _detectedPortrait.dispose();
+    _detectedAspect.dispose();
     _guideReveal.dispose();
     _local?.dispose();
     _panels
@@ -1044,7 +1064,7 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
             child: KeyedSubtree(
               key: ValueKey(_roomEpoch),
               child: ListenableBuilder(
-                listenable: Listenable.merge([_orientation, _detectedPortrait]),
+                listenable: Listenable.merge([_orientation, _detectedPortrait, _detectedAspect]),
                 builder: (context, _) => _page(context, controller, settings),
               ),
             ),
@@ -1582,6 +1602,14 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
         width: page.maxWidth,
         height: page.maxHeight,
         mobile: _platform.mobile,
+        unfoldedFoldable:
+            foldableSplitsFrom600 &&
+            foldableWindow(
+              size: Size(page.maxWidth, page.maxHeight),
+              features: MediaQuery.displayFeaturesOf(context),
+              mobile: _platform.mobile,
+            ),
+        portraitStream: portrait,
         portraitPanel: portraitPanelEligible(
           portraitStream: portrait,
           adaptation: settings.adaptation,
@@ -1694,7 +1722,14 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
     BoxConstraints constraints, {
     double keyboard = 0,
   }) {
-    final height = (constraints.maxWidth * 9 / 16).clamp(0.0, constraints.maxHeight * 0.6);
+    // The picture keeps the source's shape (A07.2): a 9:16 stream no longer
+    // sits in a 16:9 box with black bands (Issue #927). A 16:9 stream keeps
+    // exactly 5.6.5's height.
+    final height = phonePictureHeight(
+      width: constraints.maxWidth,
+      height: constraints.maxHeight,
+      aspectRatio: phonePictureFollowsSource ? _detectedAspect.value : null,
+    );
     return Stack(
       fit: StackFit.expand,
       children: [

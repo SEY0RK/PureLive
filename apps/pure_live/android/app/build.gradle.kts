@@ -44,13 +44,21 @@ extensions.configure<com.android.build.api.dsl.ApplicationExtension> {
     }
     defaultConfig {
         // 3.x's id: the release build installs over 3.x and keeps its data (M15).
-        applicationId = "com.mystyle.purelive"
+        // The candidate build lives next to the release: it is signed with
+        // another key, so it can never update it (PURELIVE_CANDIDATE=true).
+        applicationId =
+            if (System.getenv("PURELIVE_CANDIDATE") == "true") {
+                "com.mystyle.purelive.candidate"
+            } else {
+                "com.mystyle.purelive"
+            }
         // 3.x's floor (its FFmpeg bundle needs API 26; M8 keeps that engine).
         minSdk = 26
         targetSdk = 37
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        manifestPlaceholders["appLabel"] = "纯粹直播"
+        manifestPlaceholders["appLabel"] =
+            if (System.getenv("PURELIVE_CANDIDATE") == "true") "纯粹直播 测试" else "纯粹直播"
     }
 
     signingConfigs {

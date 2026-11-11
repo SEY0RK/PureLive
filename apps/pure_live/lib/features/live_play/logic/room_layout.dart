@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' show DisplayFeature, DisplayFeatureState, DisplayFeatureType, Size;
 
 import 'package:live_ui/live_ui.dart' show AppMotion, windowCompactHeight;
 
@@ -78,11 +79,19 @@ RoomPageLayout roomPageLayout({
   required double height,
   required bool portraitPanel,
   bool mobile = true,
+  bool unfoldedFoldable = false,
+  bool portraitStream = false,
 }) {
   if (height < roomCompactMaxHeight && width > height && width >= 600) {
     return mobile ? RoomPageLayout.landscape : RoomPageLayout.wide;
   }
   if (width >= roomWideMinWidth) return RoomPageLayout.wide;
+  // A07.5 c9: an unfolded foldable's inner screen is 600-839 wide, below the
+  // 840 rule. It splits for a portrait stream, whose picture then uses the
+  // column's full height; a 16:9 stream keeps the stack, where it is larger.
+  if (unfoldedFoldable && width >= roomFoldableSplitMinWidth && portraitStream) {
+    return RoomPageLayout.wide;
+  }
   return portraitPanel ? RoomPageLayout.portraitPanel : RoomPageLayout.phone;
 }
 
@@ -315,3 +324,67 @@ double balancedScale({
 /// The width of the wide room's chat column (3.x: 34 % of the window, 300 to
 /// 400; U.2d choice H3).
 double chatColumnWidth(double width) => (width * 0.34).clamp(300.0, 400.0);
+
+/// The share of the page the stacked picture may take: 5.x clamped its 16:9
+/// box to 60 % of the height, and the source-shaped box keeps that ceiling.
+const double phonePictureShare = 0.6;
+
+/// The least width that lets an unfolded foldable split (A07.5 c9): a
+/// book-style foldable's inner screen is 600-839 wide, below
+/// [roomWideMinWidth]; an ordinary window keeps the 840 rule.
+const double roomFoldableSplitMinWidth = 600;
+
+/// The height of the picture box above the chat ([RoomPageLayout.phone]): the
+/// source's own shape at the full width, at most [share] of [height].
+///
+/// 3.x `resolveCompatibilityVideoHeight`: a fixed 16:9 box left a 9:16 source
+/// a strip in the middle with black bands above and below (Issue #927). A
+/// landscape source still gets its plain 16:9 box, and an unknown
+/// [aspectRatio] falls back to it, so nothing moves before the first frame.
+double phonePictureHeight({
+  required double width,
+  required double height,
+  double? aspectRatio,
+  double share = phonePictureShare,
+}) {
+  if (!width.isFinite || width <= 0) return 0;
+  final ratio = aspectRatio != null && aspectRatio.isFinite && aspectRatio > 0 ? aspectRatio : 16 / 9;
+  final natural = width / ratio;
+  if (!height.isFinite) return natural;
+  if (height <= 0) return 0;
+  return natural.clamp(0.0, height * share.clamp(0.0, 1.0));
+}
+
+/// Whether [features] report an unfolded foldable: a fold or a hinge that is
+/// flat (fully open) or half open. A cut-out never counts.
+///
+/// [DisplayHinge.find] cannot answer this: a flat fold's bounds have no
+/// width, and it skips those.
+bool unfoldedFoldable(Iterable<DisplayFeature> features) {
+  for (final feature in features) {
+    if (feature.type == DisplayFeatureType.cutout) continue;
+    if (feature.state == DisplayFeatureState.postureFlat ||
+        feature.state == DisplayFeatureState.postureHalfOpened) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Whether the window is a foldable's open inner screen (A07.5 c9): the system
+/// reports a fold or a hinge, or, on a phone or tablet, the window is nearly
+/// square — 600-839 wide and at most 1.25 times as tall. No ordinary phone or
+/// tablet in portrait is (720 x 1000 is 1.39, 800 x 1280 is 1.6), while a
+/// book-style foldable's inner screen is (673 x 841 is 1.25). The fallback
+/// covers a device that reports no display feature at all.
+bool foldableWindow({
+  required Size size,
+  required Iterable<DisplayFeature> features,
+  required bool mobile,
+}) {
+  if (unfoldedFoldable(features)) return true;
+  if (!mobile || !size.width.isFinite || !size.height.isFinite) return false;
+  if (size.width < roomFoldableSplitMinWidth || size.width >= roomWideMinWidth) return false;
+  if (size.height < size.width) return false;
+  return size.height / size.width <= 1.25;
+}
