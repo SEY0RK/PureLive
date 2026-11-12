@@ -1,5 +1,5 @@
 import 'dart:math' as math;
-import 'dart:ui' show DisplayFeature, DisplayFeatureState, DisplayFeatureType, Size;
+import 'dart:ui' show DisplayFeature, DisplayFeatureState, DisplayFeatureType, Rect, Size;
 
 import 'package:live_ui/live_ui.dart' show AppMotion, windowCompactHeight;
 
@@ -43,6 +43,10 @@ enum RoomPageLayout {
   /// a [phoneLandscapeChatWidth] column on its right (A07.17 c2, choice A:
   /// the tablet's split left the list one line).
   landscape,
+
+  /// A half-opened foldable held sideways: the physical fold splits the
+  /// window into an upper picture and a lower chat pane (A07.5 c9c).
+  tabletop,
 }
 
 /// How the controls over the picture are arranged: one control layer, three
@@ -81,7 +85,12 @@ RoomPageLayout roomPageLayout({
   bool mobile = true,
   bool unfoldedFoldable = false,
   bool portraitStream = false,
+  bool tabletop = false,
 }) {
+  // A07.5 c9c: a half-opened foldable has a real hinge across the window.
+  // The picture sits above it and the chat below. Only a landscape stream
+  // needs this; a portrait stream keeps the layouts above.
+  if (tabletop && !portraitStream) return RoomPageLayout.tabletop;
   if (height < roomCompactMaxHeight && width > height && width >= 600) {
     return mobile ? RoomPageLayout.landscape : RoomPageLayout.wide;
   }
@@ -389,4 +398,17 @@ bool foldableWindow({
   if (size.width < roomFoldableSplitMinWidth || size.width >= roomWideMinWidth) return false;
   if (size.height < size.width) return false;
   return size.height / size.width <= 1.25;
+}
+
+/// The horizontal hinge of a half-opened foldable (book or tabletop
+/// posture, A07.5 c9c): its bounds are the band between the upper and the
+/// lower half of the window. A horizontal fold is wider than it is tall; a
+/// vertical one splits left and right instead, and a cut-out never counts.
+Rect? tabletopFold(Iterable<DisplayFeature> features) {
+  for (final feature in features) {
+    if (feature.type == DisplayFeatureType.cutout) continue;
+    if (feature.state != DisplayFeatureState.postureHalfOpened) continue;
+    if (feature.bounds.width >= feature.bounds.height) return feature.bounds;
+  }
+  return null;
 }
