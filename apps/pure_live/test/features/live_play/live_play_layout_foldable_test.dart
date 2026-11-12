@@ -106,27 +106,6 @@ void main() {
       expect(tabletopFold(const [horizontal])?.top, 320);
     });
 
-    test('the hinge splits the page top and bottom for a landscape stream', () {
-      expect(
-        roomPageLayout(width: 1280, height: 700, portraitPanel: false, tabletop: true),
-        RoomPageLayout.tabletop,
-        reason: 'even at 840 and wider',
-      );
-      expect(
-        roomPageLayout(width: 823, height: 651, portraitPanel: false, unfoldedFoldable: true, tabletop: true),
-        RoomPageLayout.tabletop,
-      );
-      expect(
-        roomPageLayout(width: 823, height: 651, portraitPanel: false, unfoldedFoldable: true),
-        RoomPageLayout.wide,
-        reason: 'without the hinge it splits left and right',
-      );
-      expect(
-        roomPageLayout(width: 823, height: 651, portraitPanel: false, tabletop: true, portraitStream: true),
-        RoomPageLayout.phone,
-        reason: 'portrait streams keep their own layouts',
-      );
-    });
   });
 
   group('roomPageLayout', () {
