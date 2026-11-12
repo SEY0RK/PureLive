@@ -43,10 +43,6 @@ enum RoomPageLayout {
   /// a [phoneLandscapeChatWidth] column on its right (A07.17 c2, choice A:
   /// the tablet's split left the list one line).
   landscape,
-
-  /// A half-opened foldable held sideways: the physical fold splits the
-  /// window into an upper picture and a lower chat pane (A07.5 c9c).
-  tabletop,
 }
 
 /// How the controls over the picture are arranged: one control layer, three
@@ -85,12 +81,7 @@ RoomPageLayout roomPageLayout({
   bool mobile = true,
   bool unfoldedFoldable = false,
   bool portraitStream = false,
-  bool tabletop = false,
 }) {
-  // A07.5 c9c: a half-opened foldable has a real hinge across the window.
-  // The picture sits above it and the chat below. Only a landscape stream
-  // needs this; a portrait stream keeps the layouts above.
-  if (tabletop && !portraitStream) return RoomPageLayout.tabletop;
   if (height < roomCompactMaxHeight && width > height && width >= 600) {
     return mobile ? RoomPageLayout.landscape : RoomPageLayout.wide;
   }
