@@ -7,11 +7,22 @@ name: Candidate Android
 #
 # Pushing the result back is done with GITHUB_TOKEN, which does not trigger
 # another run, so the loop stops after one pass.
+#
+# The signing key lives in the repository secret CANDIDATE_KEYSTORE_B64; the
+# Actions cache is only a fallback. Generating a new key silently would change
+# the signature and break every installed candidate, so a missing key fails
+# the build instead. `export_key` prints the sealed key once, for migrating
+# the cache into the secret.
 
 on:
   push:
     branches: ['fix/565-layout']
   workflow_dispatch:
+    inputs:
+      export_key:
+        description: 'Print the sealed keystore for a one-off Secret migration'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -25,7 +36,34 @@ defaults:
     shell: bash
 
 jobs:
+  export-key:
+    if: ${{ inputs.export_key }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Candidate signing key (cache)
+        uses: actions/cache@v4
+        with:
+          path: apps/pure_live/android/app/candidate.jks
+          key: candidate-signing-key-v1
+
+      - name: Seal the keystore for a repository secret
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --break-system-packages pynacl
+          KEY_ID='3380204578043523366' PUBLIC_KEY='iN7pgkNiMsdLZBLufddofyca' python3 - <<'PY'
+          import base64, os
+          from nacl import encoding, public
+
+          pub = public.PublicKey(os.environ['PUBLIC_KEY'].encode(), encoding.Base64Encoder())
+          jks = open('apps/pure_live/android/app/candidate.jks', 'rb').read()
+          value = base64.b64encode(jks)
+          sealed = base64.b64encode(public.SealedBox(pub).encrypt(value)).decode()
+          print('SECRET_KEY_ID=' + os.environ['KEY_ID'])
+          print('SECRET_VALUE=' + sealed)
+          PY
+
   apk:
+    if: ${{ !inputs.export_key }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -59,20 +97,26 @@ jobs:
           flutter-version: '3.47.8'
           cache: true
 
-      - name: Candidate signing key
+      - name: Candidate signing key (cache fallback)
         uses: actions/cache@v4
         with:
           path: apps/pure_live/android/app/candidate.jks
           key: candidate-signing-key-v1
 
-      - name: Write key.properties
+      - name: Restore the candidate keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.CANDIDATE_KEYSTORE_B64 }}
         run: |
           set -euo pipefail
           key=apps/pure_live/android/app/candidate.jks
-          if [ ! -f "$key" ]; then
-            keytool -genkeypair -keystore "$key" -storepass purelive -keypass purelive \
-              -alias candidate -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname 'CN=PureLive Candidate, O=PureLive, C=CN'
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$key"
+            echo 'keystore: the repository secret'
+          elif [ -f "$key" ]; then
+            echo 'keystore: the Actions cache'
+          else
+            echo '::error::no candidate keystore: set CANDIDATE_KEYSTORE_B64; generating a new key would change the signature'
+            exit 1
           fi
           printf 'storeFile=candidate.jks\nstorePassword=purelive\nkeyAlias=candidate\nkeyPassword=purelive\n' \
             > apps/pure_live/android/key.properties
@@ -122,6 +166,13 @@ jobs:
           PURELIVE_CANDIDATE: 'true'
         run: flutter build apk --release --target-platform android-arm64
 
+      - name: Print the signer
+        working-directory: apps/pure_live
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs \
+            build/app/outputs/flutter-apk/app-release.apk | sed -n '1,8p'
+
       - name: Checksums
         run: |
           set -euo pipefail
@@ -144,10 +195,11 @@ jobs:
           name: PureLive 5.6.5 candidate ${{ github.run_number }}
           prerelease: true
           body: |
-            5.6.5 加上两处布局修复：
+            5.6.5 加上布局修复：
 
-            - 「兼容 16:9」的竖屏画面按源比例取高，不再被压成一条
-            - 折叠屏展开后，竖屏直播从 600 宽起走左右分栏
+            - 「兼容 16:9」的竖屏画面按源比例取高
+            - 折叠屏展开横拿时左右分栏，竖拿时按源方向分
+            - 半折横拿（Flex 模式）时画面上、弹幕下
 
             包名 `com.mystyle.purelive.candidate`，可与正式版共存，数据互相独立。
           files: |
