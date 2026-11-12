@@ -76,6 +76,59 @@ void main() {
     });
   });
 
+  group('tabletop fold', () {
+    const horizontal = DisplayFeature(
+      type: DisplayFeatureType.fold,
+      state: DisplayFeatureState.postureHalfOpened,
+      bounds: Rect.fromLTWH(0, 320, 900, 24),
+    );
+    const vertical = DisplayFeature(
+      type: DisplayFeatureType.hinge,
+      state: DisplayFeatureState.postureHalfOpened,
+      bounds: Rect.fromLTWH(360, 0, 24, 800),
+    );
+    const flat = DisplayFeature(
+      type: DisplayFeatureType.fold,
+      state: DisplayFeatureState.postureFlat,
+      bounds: Rect.fromLTWH(365, 0, 0, 773),
+    );
+    const hole = DisplayFeature(
+      type: DisplayFeatureType.cutout,
+      state: DisplayFeatureState.unknown,
+      bounds: Rect.fromLTWH(0, 0, 30, 20),
+    );
+
+    test('a half-opened horizontal fold is the hinge; others are not', () {
+      expect(tabletopFold(const []), isNull);
+      expect(tabletopFold(const [hole]), isNull);
+      expect(tabletopFold(const [flat]), isNull);
+      expect(tabletopFold(const [vertical]), isNull);
+      expect(tabletopFold(const [horizontal])?.top, 320);
+    });
+
+    test('the hinge splits the page top and bottom for a landscape stream', () {
+      expect(
+        roomPageLayout(width: 1280, height: 700, portraitPanel: false, tabletop: true),
+        RoomPageLayout.tabletop,
+        reason: 'even at 840 and wider',
+      );
+      expect(
+        roomPageLayout(width: 823, height: 651, portraitPanel: false, unfoldedFoldable: true, tabletop: true),
+        RoomPageLayout.tabletop,
+      );
+      expect(
+        roomPageLayout(width: 823, height: 651, portraitPanel: false, unfoldedFoldable: true),
+        RoomPageLayout.wide,
+        reason: 'without the hinge it splits left and right',
+      );
+      expect(
+        roomPageLayout(width: 823, height: 651, portraitPanel: false, tabletop: true, portraitStream: true),
+        RoomPageLayout.phone,
+        reason: 'portrait streams keep their own layouts',
+      );
+    });
+  });
+
   group('roomPageLayout', () {
     test('an unfolded foldable splits from 600 for a portrait stream', () {
       expect(
