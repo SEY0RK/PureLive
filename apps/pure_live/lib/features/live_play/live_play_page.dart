@@ -1598,15 +1598,20 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
       final portrait = _portraitStream(settings);
       // Above the Scaffold, whose body no longer sees it (A07.18).
       final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+      final features = MediaQuery.displayFeaturesOf(context);
+      // A07.5 c9c: a half-opened foldable held sideways has a hinge across
+      // the window; the picture goes above it, the chat below.
+      final fold = _platform.mobile ? tabletopFold(features) : null;
       final layout = roomPageLayout(
         width: page.maxWidth,
         height: page.maxHeight,
         mobile: _platform.mobile,
+        tabletop: fold != null,
         unfoldedFoldable:
             foldableSplitsFrom600 &&
             foldableWindow(
               size: Size(page.maxWidth, page.maxHeight),
-              features: MediaQuery.displayFeaturesOf(context),
+              features: features,
               mobile: _platform.mobile,
             ),
         portraitStream: portrait,
@@ -1634,6 +1639,7 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
                 return _channel(controller, settings, layout, constraints, keyboard: keyboard);
               }
               return switch (layout) {
+                RoomPageLayout.tabletop => _tabletop(controller, settings, constraints, fold: fold!, keyboard: keyboard),
                 RoomPageLayout.wide => _wide(controller, settings, constraints, portrait: portrait),
                 RoomPageLayout.landscape => _phoneLandscape(controller, settings, portrait: portrait),
                 RoomPageLayout.portraitPanel => _portraitPanel(controller, settings, keyboard: keyboard),
@@ -1776,6 +1782,75 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
         panels: _panelLayer(controller, portrait: true),
         keyboard: keyboard,
       );
+
+  /// A half-opened foldable held sideways (A07.5 c9c): the hinge splits the
+  /// window itself, so the picture takes the upper pane and the chat list the
+  /// lower one. The hinge band stays black. Only a landscape stream gets
+  /// here; the room strip and the quality and line move into the picture's
+  /// bars, as in [RoomPageLayout.landscape], so the chat keeps every line it
+  /// can. Panels stay under the picture instead of covering it.
+  Widget _tabletop(
+    LiveRoomController controller,
+    _LayoutSettings settings,
+    BoxConstraints constraints, {
+    required Rect fold,
+    double keyboard = 0,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    // Feature bounds are in window coordinates; scale their position onto
+    // the body's height (which excludes the app bar) instead of subtracting
+    // an inset that differs between Android releases.
+    final window = MediaQuery.sizeOf(context).height;
+    final share = window > 0 ? (fold.center.dy / window).clamp(0.35, 0.65).toDouble() : 0.5;
+    final top = (constraints.maxHeight * share).clamp(0.0, constraints.maxHeight * 0.8).toDouble();
+    final gap = fold.height.clamp(0.0, 32.0).toDouble();
+    final player = _player(
+      controller,
+      settings,
+      arrangement: ControlsArrangement.inline,
+      onTitle: _toggleDetails,
+      pickersInBar: true,
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Column(
+          key: const ValueKey('live-play-tabletop-split'),
+          children: [
+            SizedBox(
+              key: const ValueKey('live-play-tabletop-picture'),
+              height: top,
+              child: ColoredBox(color: OnVideoColors.ground, child: player),
+            ),
+            SizedBox(height: gap, child: ColoredBox(color: OnVideoColors.ground)),
+            Expanded(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: scheme.outlineVariant)),
+                ),
+                child: _withDetails(
+                  controller,
+                  ListenableSelector<bool>(
+                    listenable: controller,
+                    selector: () => controller.isArchive,
+                    builder: (context, archive, _) => archive
+                        ? RoomReplayLibrary(controller: controller)
+                        : ChatList(controller: controller, memory: _memory),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        _panelUnderPicture(
+          controller,
+          top: top + gap,
+          keyboard: keyboard,
+          key: const ValueKey('live-play-tabletop-panel'),
+        ),
+      ],
+    );
+  }
 
   /// A07.17 c2 (choice A): a phone held sideways, not in fullscreen. The
   /// picture takes the full height under the app bar; on its right only the
