@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m pip install --quiet --break-system-packages pynacl
-          KEY_ID='3380204578043523366' PUBLIC_KEY='iN7pgkNiMsdLZBLufddofyca' python3 - <<'PY'
+          KEY_ID='3380204578043523366' PUBLIC_KEY='iN7pgkNiMsdLZBLufddofyca6oVAMoN7vjVUd6vpeSU=' python3 - <<'PY'
           import base64, os
           from nacl import encoding, public
 
