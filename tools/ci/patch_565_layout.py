@@ -303,4 +303,207 @@ patch(
     'System.getenv("PURELIVE_CANDIDATE") == "true") "纯粹直播 测试"',
 )
 
+# ------------------------------------------------- A07.5 c9c: tabletop posture
+
+patch(
+    LAYOUT,
+    "import 'dart:ui' show DisplayFeature, DisplayFeatureState, DisplayFeatureType, Size;",
+    "import 'dart:ui' show DisplayFeature, DisplayFeatureState, DisplayFeatureType, Rect, Size;",
+    "Rect, Size;",
+)
+
+patch(
+    LAYOUT,
+    """  /// A phone held sideways, not in fullscreen (a short window, 600 or
+  /// wider; UI_PLAN §5.1: a compact height wins over the width): the
+  /// picture at the full height under the app bar and only the chat list in
+  /// a [phoneLandscapeChatWidth] column on its right (A07.17 c2, choice A:
+  /// the tablet's split left the list one line).
+  landscape,
+}""",
+    """  /// A phone held sideways, not in fullscreen (a short window, 600 or
+  /// wider; UI_PLAN §5.1: a compact height wins over the width): the
+  /// picture at the full height under the app bar and only the chat list in
+  /// a [phoneLandscapeChatWidth] column on its right (A07.17 c2, choice A:
+  /// the tablet's split left the list one line).
+  landscape,
+
+  /// A half-opened foldable held sideways: the physical fold splits the
+  /// window into an upper picture and a lower chat pane (A07.5 c9c).
+  tabletop,
+}""",
+    "  tabletop,",
+)
+
+patch(
+    LAYOUT,
+    """  bool unfoldedFoldable = false,
+  bool portraitStream = false,
+}) {
+  if (height < roomCompactMaxHeight && width > height && width >= 600) {""",
+    """  bool unfoldedFoldable = false,
+  bool portraitStream = false,
+  bool tabletop = false,
+}) {
+  // A07.5 c9c: a half-opened foldable has a real hinge across the window.
+  // The picture sits above it and the chat below. Only a landscape stream
+  // needs this; a portrait stream keeps the layouts above.
+  if (tabletop && !portraitStream) return RoomPageLayout.tabletop;
+  if (height < roomCompactMaxHeight && width > height && width >= 600) {""",
+    "bool tabletop = false,",
+)
+
+patch(
+    LAYOUT,
+    """  if (size.height < size.width) return false;
+  return size.height / size.width <= 1.25;
+}""",
+    """  if (size.height < size.width) return false;
+  return size.height / size.width <= 1.25;
+}
+
+/// The horizontal hinge of a half-opened foldable (book or tabletop
+/// posture, A07.5 c9c): its bounds are the band between the upper and the
+/// lower half of the window. A horizontal fold is wider than it is tall; a
+/// vertical one splits left and right instead, and a cut-out never counts.
+Rect? tabletopFold(Iterable<DisplayFeature> features) {
+  for (final feature in features) {
+    if (feature.type == DisplayFeatureType.cutout) continue;
+    if (feature.state != DisplayFeatureState.postureHalfOpened) continue;
+    if (feature.bounds.width >= feature.bounds.height) return feature.bounds;
+  }
+  return null;
+}""",
+    "Rect? tabletopFold(",
+)
+
+TABLETOP_WIDGET = """  /// A half-opened foldable held sideways (A07.5 c9c): the hinge splits the
+  /// window itself, so the picture takes the upper pane and the chat list the
+  /// lower one. The hinge band stays black. Only a landscape stream gets
+  /// here; the room strip and the quality and line move into the picture's
+  /// bars, as in [RoomPageLayout.landscape], so the chat keeps every line it
+  /// can. Panels stay under the picture instead of covering it.
+  Widget _tabletop(
+    LiveRoomController controller,
+    _LayoutSettings settings,
+    BoxConstraints constraints, {
+    required Rect fold,
+    double keyboard = 0,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    // Feature bounds are in window coordinates; scale their position onto
+    // the body's height (which excludes the app bar) instead of subtracting
+    // an inset that differs between Android releases.
+    final window = MediaQuery.sizeOf(context).height;
+    final share = window > 0 ? (fold.center.dy / window).clamp(0.35, 0.65).toDouble() : 0.5;
+    final top = (constraints.maxHeight * share).clamp(0.0, constraints.maxHeight * 0.8).toDouble();
+    final gap = fold.height.clamp(0.0, 32.0).toDouble();
+    final player = _player(
+      controller,
+      settings,
+      arrangement: ControlsArrangement.inline,
+      onTitle: _toggleDetails,
+      pickersInBar: true,
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Column(
+          key: const ValueKey('live-play-tabletop-split'),
+          children: [
+            SizedBox(
+              key: const ValueKey('live-play-tabletop-picture'),
+              height: top,
+              child: ColoredBox(color: OnVideoColors.ground, child: player),
+            ),
+            SizedBox(height: gap, child: ColoredBox(color: OnVideoColors.ground)),
+            Expanded(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: scheme.outlineVariant)),
+                ),
+                child: _withDetails(
+                  controller,
+                  ListenableSelector<bool>(
+                    listenable: controller,
+                    selector: () => controller.isArchive,
+                    builder: (context, archive, _) => archive
+                        ? RoomReplayLibrary(controller: controller)
+                        : ChatList(controller: controller, memory: _memory),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        _panelUnderPicture(
+          controller,
+          top: top + gap,
+          keyboard: keyboard,
+          key: const ValueKey('live-play-tabletop-panel'),
+        ),
+      ],
+    );
+  }
+
+"""
+
+patch(
+    PAGE,
+    """      final portrait = _portraitStream(settings);
+      // Above the Scaffold, whose body no longer sees it (A07.18).
+      final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+      final layout = roomPageLayout(
+        width: page.maxWidth,
+        height: page.maxHeight,
+        mobile: _platform.mobile,
+        unfoldedFoldable:
+            foldableSplitsFrom600 &&
+            foldableWindow(
+              size: Size(page.maxWidth, page.maxHeight),
+              features: MediaQuery.displayFeaturesOf(context),
+              mobile: _platform.mobile,
+            ),
+        portraitStream: portrait,""",
+    """      final portrait = _portraitStream(settings);
+      // Above the Scaffold, whose body no longer sees it (A07.18).
+      final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+      final features = MediaQuery.displayFeaturesOf(context);
+      // A07.5 c9c: a half-opened foldable held sideways has a hinge across
+      // the window; the picture goes above it, the chat below.
+      final fold = _platform.mobile ? tabletopFold(features) : null;
+      final layout = roomPageLayout(
+        width: page.maxWidth,
+        height: page.maxHeight,
+        mobile: _platform.mobile,
+        tabletop: fold != null,
+        unfoldedFoldable:
+            foldableSplitsFrom600 &&
+            foldableWindow(
+              size: Size(page.maxWidth, page.maxHeight),
+              features: features,
+              mobile: _platform.mobile,
+            ),
+        portraitStream: portrait,""",
+    "final fold = _platform.mobile ? tabletopFold(features) : null;",
+)
+
+patch(
+    PAGE,
+    """              return switch (layout) {
+                RoomPageLayout.wide => _wide(controller, settings, constraints, portrait: portrait),""",
+    """              return switch (layout) {
+                RoomPageLayout.tabletop => _tabletop(controller, settings, constraints, fold: fold!, keyboard: keyboard),
+                RoomPageLayout.wide => _wide(controller, settings, constraints, portrait: portrait),""",
+    "RoomPageLayout.tabletop =>",
+)
+
+patch(
+    PAGE,
+    "  /// A07.17 c2 (choice A): a phone held sideways, not in fullscreen. The",
+    TABLETOP_WIDGET + "  /// A07.17 c2 (choice A): a phone held sideways, not in fullscreen. The",
+    "Widget _tabletop(",
+)
+
+
 print("patch_565_layout: done")
