@@ -395,9 +395,9 @@ TABLETOP_WIDGET = """  /// A half-opened foldable held sideways (A07.5 c9c): the
     // the body's height (which excludes the app bar) instead of subtracting
     // an inset that differs between Android releases.
     final window = MediaQuery.sizeOf(context).height;
-    final share = window > 0 ? (fold.center.dy / window).clamp(0.35, 0.65).toDouble() : 0.5;
-    final top = (constraints.maxHeight * share).clamp(0.0, constraints.maxHeight * 0.8).toDouble();
-    final gap = fold.height.clamp(0.0, 32.0).toDouble();
+    final share = window > 0 ? (fold.center.dy / window).clamp(0.35, 0.65) : 0.5;
+    final top = (constraints.maxHeight * share).clamp(0.0, constraints.maxHeight * 0.8);
+    final gap = fold.height.clamp(0.0, 32.0);
     final player = _player(
       controller,
       settings,
@@ -416,7 +416,7 @@ TABLETOP_WIDGET = """  /// A half-opened foldable held sideways (A07.5 c9c): the
               height: top,
               child: ColoredBox(color: OnVideoColors.ground, child: player),
             ),
-            SizedBox(height: gap, child: ColoredBox(color: OnVideoColors.ground)),
+            SizedBox(height: gap, child: const ColoredBox(color: OnVideoColors.ground)),
             Expanded(
               child: DecoratedBox(
                 decoration: BoxDecoration(
