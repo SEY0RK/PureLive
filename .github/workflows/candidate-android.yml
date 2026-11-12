@@ -166,12 +166,19 @@ jobs:
           PURELIVE_CANDIDATE: 'true'
         run: flutter build apk --release --target-platform android-arm64
 
-      - name: Print the signer
+      - name: Verify the signature
         working-directory: apps/pure_live
         run: |
           set -euo pipefail
-          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs \
-            build/app/outputs/flutter-apk/app-release.apk | sed -n '1,8p'
+          expected=2e2c85fa3dbd8bf576733936ac3070b49a32ed75215bb0ce3c6fb68a7b1a6768
+          out="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs \
+            build/app/outputs/flutter-apk/app-release.apk)"
+          echo "$out" | sed -n '1,8p'
+          if ! echo "$out" | grep -qi "certificate SHA-256 digest: $expected"; then
+            echo "::error::the APK is not signed with the candidate key (expected $expected)"
+            exit 1
+          fi
+          echo 'signature: the candidate key'
 
       - name: Checksums
         run: |
