@@ -106,12 +106,16 @@ jobs:
       - name: Restore the candidate keystore
         env:
           KEYSTORE_B64: ${{ secrets.CANDIDATE_KEYSTORE_B64 }}
+          KEYSTORE_BACKUP_B64: ${{ secrets.CANDIDATE_KEYSTORE_BACKUP_B64 }}
         run: |
           set -euo pipefail
           key=apps/pure_live/android/app/candidate.jks
           if [ -n "${KEYSTORE_B64:-}" ]; then
             printf '%s' "$KEYSTORE_B64" | base64 -d > "$key"
             echo 'keystore: the repository secret'
+          elif [ -n "${KEYSTORE_BACKUP_B64:-}" ]; then
+            printf '%s' "$KEYSTORE_BACKUP_B64" | base64 -d > "$key"
+            echo 'keystore: the backup secret'
           elif [ -f "$key" ]; then
             echo 'keystore: the Actions cache'
           else
