@@ -1478,6 +1478,15 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
               mobile: _platform.mobile,
             );
             final portrait = _portraitStream(settings);
+            // A07.5 c9c: fullscreen, held sideways, halfway folded — the
+            // hinge divides the screen itself, so the picture goes above it
+            // and the chat below. Every other fullscreen keeps its layout.
+            final fold = _platform.mobile && _display == RoomDisplay.fullscreen && !portrait
+                ? tabletopFold(MediaQuery.displayFeaturesOf(context))
+                : null;
+            if (fold != null && arrangement == ControlsArrangement.landscape) {
+              return _tabletopFullscreen(controller, settings, constraints, fold: fold, keyboard: keyboard);
+            }
             final upright = arrangement == ControlsArrangement.portraitFullscreen;
             // U.2b2: the portrait fullscreen swipes through the list the room
             // came from, with its setting on.
@@ -1599,14 +1608,10 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
       // Above the Scaffold, whose body no longer sees it (A07.18).
       final keyboard = MediaQuery.viewInsetsOf(context).bottom;
       final features = MediaQuery.displayFeaturesOf(context);
-      // A07.5 c9c: a half-opened foldable held sideways has a hinge across
-      // the window; the picture goes above it, the chat below.
-      final fold = _platform.mobile ? tabletopFold(features) : null;
       final layout = roomPageLayout(
         width: page.maxWidth,
         height: page.maxHeight,
         mobile: _platform.mobile,
-        tabletop: fold != null,
         unfoldedFoldable:
             foldableSplitsFrom600 &&
             foldableWindow(
@@ -1639,7 +1644,6 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
                 return _channel(controller, settings, layout, constraints, keyboard: keyboard);
               }
               return switch (layout) {
-                RoomPageLayout.tabletop => _tabletop(controller, settings, constraints, fold: fold!, keyboard: keyboard),
                 RoomPageLayout.wide => _wide(controller, settings, constraints, portrait: portrait),
                 RoomPageLayout.landscape => _phoneLandscape(controller, settings, portrait: portrait),
                 RoomPageLayout.portraitPanel => _portraitPanel(controller, settings, keyboard: keyboard),
@@ -1783,13 +1787,13 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
         keyboard: keyboard,
       );
 
-  /// A half-opened foldable held sideways (A07.5 c9c): the hinge splits the
-  /// window itself, so the picture takes the upper pane and the chat list the
-  /// lower one. The hinge band stays black. Only a landscape stream gets
-  /// here; the room strip and the quality and line move into the picture's
-  /// bars, as in [RoomPageLayout.landscape], so the chat keeps every line it
-  /// can. Panels stay under the picture instead of covering it.
-  Widget _tabletop(
+  /// Fullscreen, held sideways, halfway folded (A07.5 c9c): the hinge splits
+  /// the screen itself, so the picture takes the upper pane and the chat list
+  /// the lower one, and the hinge band stays black. Only a fullscreen room
+  /// gets here; the page keeps its own layouts. The quality and line move
+  /// into the picture's bars, as in the landscape fullscreen, so the chat
+  /// keeps every line it can. Panels stay under the picture.
+  Widget _tabletopFullscreen(
     LiveRoomController controller,
     _LayoutSettings settings,
     BoxConstraints constraints, {
@@ -1807,7 +1811,7 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
     final player = _player(
       controller,
       settings,
-      arrangement: ControlsArrangement.inline,
+      arrangement: ControlsArrangement.landscape,
       onTitle: _toggleDetails,
       pickersInBar: true,
     );
