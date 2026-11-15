@@ -1,0 +1,175 @@
+name: Candidate Android (merge follows)
+
+# Builds a candidate APK of ai/merge-follows-union for on-device verification:
+#   * package com.mystyle.purelive.candidate, so it lives next to the release
+#     app and never updates it;
+#   * signed with the candidate key from the repository secret
+#     CANDIDATE_KEYSTORE_B64 (the Actions cache is only a fallback). A missing
+#     key fails the build: generating a new one would change the signature and
+#     break every installed candidate;
+#   * arm64 only, release, minified, published as the pre-release
+#     candidate-merge-<run_number>.
+#
+# Unlike the fix/565-layout workflow there is no patch step and nothing is
+# pushed back to the branch, so one push makes exactly one commit and one run.
+
+on:
+  push:
+    branches: ['ai/merge-follows-union']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: candidate-merge-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '27'
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.8'
+          cache: true
+
+      - name: Candidate signing key (cache fallback)
+        uses: actions/cache@v4
+        with:
+          path: apps/pure_live/android/app/candidate.jks
+          key: candidate-signing-key-v1
+
+      - name: Restore the candidate keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.CANDIDATE_KEYSTORE_B64 }}
+          KEYSTORE_BACKUP_B64: ${{ secrets.CANDIDATE_KEYSTORE_BACKUP_B64 }}
+        run: |
+          set -euo pipefail
+          key=apps/pure_live/android/app/candidate.jks
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$key"
+            echo 'keystore: the repository secret'
+          elif [ -n "${KEYSTORE_BACKUP_B64:-}" ]; then
+            printf '%s' "$KEYSTORE_BACKUP_B64" | base64 -d > "$key"
+            echo 'keystore: the backup secret'
+          elif [ -f "$key" ]; then
+            echo 'keystore: the Actions cache'
+          else
+            echo '::error::no candidate keystore: set CANDIDATE_KEYSTORE_B64; generating a new key would change the signature'
+            exit 1
+          fi
+          printf 'storeFile=candidate.jks\nstorePassword=purelive\nkeyAlias=candidate\nkeyPassword=purelive\n' \
+            > apps/pure_live/android/key.properties
+          ls -l "$key"
+
+      - name: Android SDK
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          for package in 'platforms;android-37' 'build-tools;37.0.0' 'ndk;30.0.16248370' 'cmake;4.1.2'; do
+            "$SDKMANAGER" --install "$package" > /dev/null || echo "not installed now: $package (Gradle may fetch it)"
+          done
+          "$SDKMANAGER" --list_installed | sed -n '1,40p'
+
+      - name: Packages and the recorder's FFmpeg
+        run: |
+          set -euo pipefail
+          flutter --version
+          flutter pub get --enforce-lockfile
+          bash tools/ffmpeg_kit/fetch.sh android
+          # native assets of the same package also need the linux-x64 bundle.
+          bash tools/ffmpeg_kit/fetch.sh linux
+
+      - name: Linux build deps for native assets
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-dev libx11-dev libxi-dev pkg-config
+
+      - name: Analyze
+        working-directory: apps/pure_live
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build the candidate APK
+        working-directory: apps/pure_live
+        env:
+          PURELIVE_CANDIDATE: 'true'
+        run: flutter build apk --release --target-platform android-arm64
+
+      - name: Check the package identity
+        working-directory: apps/pure_live
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          badging="$("$ANDROID_HOME/build-tools/37.0.0/aapt2" dump badging "$apk" | head -1)"
+          echo "$badging"
+          if ! echo "$badging" | grep -q "package: name='com.mystyle.purelive.candidate'"; then
+            echo '::error::not the candidate package: PURELIVE_CANDIDATE did not reach Gradle'
+            exit 1
+          fi
+          echo "versionCode: $(echo "$badging" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")"
+
+      - name: Verify the signature
+        working-directory: apps/pure_live
+        run: |
+          set -euo pipefail
+          expected=2e2c85fa3dbd8bf576733936ac3070b49a32ed75215bb0ce3c6fb68a7b1a6768
+          out="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs \
+            build/app/outputs/flutter-apk/app-release.apk)"
+          echo "$out" | sed -n '1,8p'
+          if ! echo "$out" | grep -qi "certificate SHA-256 digest: $expected"; then
+            echo "::error::the APK is not signed with the candidate key (expected $expected)"
+            exit 1
+          fi
+          echo 'signature: the candidate key'
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd apps/pure_live/build/app/outputs/flutter-apk
+          ls -l
+          sha256sum *.apk > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: purelive-merge-candidate
+          path: |
+            apps/pure_live/build/app/outputs/flutter-apk/*.apk
+            apps/pure_live/build/app/outputs/flutter-apk/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: candidate-merge-${{ github.run_number }}
+          name: PureLive 5.6.5 关注列表合并 candidate ${{ github.run_number }}
+          prerelease: true
+          body: |
+            5.6.5 加上「关注列表合并」的验证包（分支 `ai/merge-follows-union`，提交 `${{ github.sha }}`）。
+
+            - 从备份或设备同步恢复关注列表时，可以在「覆盖」和「合并」之间选
+            - 合并按身份去重、本地优先，预览显示合并后的数量，本机已有项不会被移除
+            - 两个恢复对话框默认都是「合并」；协议报文、sections 和 3.x 保持一致
+
+            包名 `com.mystyle.purelive.candidate`，可与正式版共存，数据互相独立。只用于真机验证，不是发布包。
+          files: |
+            apps/pure_live/build/app/outputs/flutter-apk/*.apk
+            apps/pure_live/build/app/outputs/flutter-apk/SHA256SUMS.txt
