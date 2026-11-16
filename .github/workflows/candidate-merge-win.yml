@@ -85,7 +85,7 @@ jobs:
           $release = 'apps/pure_live/build/windows/x64/runner/Release'
           if (-not (Test-Path "$release/pure_live.exe")) { throw "no pure_live.exe under $release" }
           foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
-            if (-not (Test-Path "$release/$dll")) { throw "missing $dll: the app-local runtime is incomplete" }
+            if (-not (Test-Path "$release/$dll")) { throw "missing ${dll}: the app-local runtime is incomplete" }
           }
           if (-not (Test-Path "$release/data/flutter_assets")) { throw 'missing data/flutter_assets' }
 

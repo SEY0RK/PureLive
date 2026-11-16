@@ -16,6 +16,9 @@ name: Candidate Android (merge follows)
 on:
   push:
     branches: ['ai/merge-follows-union']
+    paths-ignore:
+      - '.github/workflows/candidate-merge.yml'
+      - '.github/workflows/candidate-merge-win.yml'
   workflow_dispatch:
 
 permissions:
