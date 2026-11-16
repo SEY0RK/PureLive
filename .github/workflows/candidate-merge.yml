@@ -14,11 +14,6 @@ name: Candidate Android (merge follows)
 # pushed back to the branch, so one push makes exactly one commit and one run.
 
 on:
-  push:
-    branches: ['ai/merge-follows-union']
-    paths-ignore:
-      - '.github/workflows/candidate-merge.yml'
-      - '.github/workflows/candidate-merge-win.yml'
   workflow_dispatch:
 
 permissions:

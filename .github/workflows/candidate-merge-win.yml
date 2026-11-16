@@ -12,8 +12,6 @@ name: Candidate Windows (merge follows)
 # the toolchain; it does not touch master and ships no release package.
 
 on:
-  push:
-    branches: ['ai/merge-follows-union']
   workflow_dispatch:
 
 permissions:
