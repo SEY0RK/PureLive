@@ -1,0 +1,134 @@
+name: Candidate Windows (merge follows)
+
+# Builds the portable Windows zip of ai/merge-follows-union for verification:
+#   * unzip into its own empty folder: the app keeps its data in UserData
+#     beside the exe, so it never touches the installed release;
+#   * no installer and no code signing (the repository has no Windows
+#     certificate), so SmartScreen warns once;
+#   * published as the pre-release candidate-merge-win-<run_number>.
+#
+# docs/specs/ENGINEERING.md builds Windows on the maintainer's host. This
+# workflow only exists to produce a verification build from a machine without
+# the toolchain; it does not touch master and ships no release package.
+
+on:
+  push:
+    branches: ['ai/merge-follows-union']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: candidate-merge-win-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pinned Flutter version
+        run: |
+          $version = (Select-String -Path toolchain.env -Pattern '^FLUTTER_VERSION=(.+)$').Matches[0].Groups[1].Value
+          "FLUTTER_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "flutter $version"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Toolchain
+        run: |
+          flutter --version
+          cmake --version
+          (Get-Command cl.exe).Source
+
+      - name: Packages and the recorder's FFmpeg
+        run: |
+          $ErrorActionPreference = 'Stop'
+          flutter pub get --enforce-lockfile
+          pwsh -NoProfile -ExecutionPolicy Bypass -File tools/ffmpeg_kit/fetch.ps1 windows
+
+      - name: Analyze
+        working-directory: apps/pure_live
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build
+        working-directory: apps/pure_live
+        run: flutter build windows --release
+
+      - name: Package the portable zip
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $match = Select-String -Path apps/pure_live/pubspec.yaml -Pattern '^version: ([0-9.]+)\+([0-9]+)$'
+          if (-not $match) { throw 'no version line in pubspec.yaml' }
+          $version = $match.Matches[0].Groups[1].Value
+          $build = $match.Matches[0].Groups[2].Value
+          $name = "PureLive-$version-$build-windows-x64"
+
+          $release = 'apps/pure_live/build/windows/x64/runner/Release'
+          if (-not (Test-Path "$release/pure_live.exe")) { throw "no pure_live.exe under $release" }
+          foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            if (-not (Test-Path "$release/$dll")) { throw "missing $dll: the app-local runtime is incomplete" }
+          }
+          if (-not (Test-Path "$release/data/flutter_assets")) { throw 'missing data/flutter_assets' }
+
+          $stage = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Get-ChildItem -LiteralPath $release -Force |
+            Where-Object { $_.Name -notin @('UserData', 'AppData') -and $_.Extension -ne '.log' } |
+            Copy-Item -Destination $stage -Recurse
+
+          $out = 'build/release'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $zip = Join-Path $out "$name-portable.zip"
+          Compress-Archive -Path "$stage\*" -DestinationPath $zip -Force
+
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name-portable.zip" | Out-File -FilePath (Join-Path $out 'SHA256SUMS.txt') -Encoding ascii
+          Get-Item $zip | Select-Object Name, Length
+          Get-Content (Join-Path $out 'SHA256SUMS.txt')
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: purelive-merge-windows
+          path: |
+            build/release/*.zip
+            build/release/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: candidate-merge-win-${{ github.run_number }}
+          name: PureLive 5.6.5 关注列表合并 candidate Windows ${{ github.run_number }}
+          prerelease: true
+          body: |
+            5.6.5 加上「关注列表合并」的 Windows 便携版（分支 `ai/merge-follows-union`，提交 `${{ github.sha }}`）。
+
+            解压到**单独的空文件夹**再运行 `pure_live.exe`；数据写在 exe 旁的 `UserData`，不会动已安装的正式版。
+
+            - 从备份或设备同步恢复关注列表时，可以在「覆盖」和「合并」之间选
+            - 合并按身份去重、本地优先，预览显示合并后的数量，本机已有项不会被移除
+            - 两个恢复对话框默认都是「合并」；协议报文、sections 和 3.x 保持一致
+
+            未做代码签名，首次运行 SmartScreen 会提示「未知发布者」，选「更多信息 → 仍要运行」。
+            与正式版共用单实例：正式版开着时便携版会直接退出，先完全退出正式版再跑。
+          files: |
+            build/release/*.zip
+            build/release/SHA256SUMS.txt
