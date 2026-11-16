@@ -176,6 +176,19 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
   /// declared: a portrait picture.
   final ValueNotifier<bool> _detectedPortrait = ValueNotifier(false);
 
+  /// The picture's shape (width over height): the decoder's, or before the
+  /// first frame what the platform declared for the line (F.1b). The stacked
+  /// picture keeps the source's shape (A07.2); null until either is known.
+  final ValueNotifier<double?> _detectedAspect = ValueNotifier(null);
+
+  /// The stacked picture follows the source's shape instead of a fixed 16:9
+  /// box ("兼容 16:9" on a 9:16 stream, Issue #927). Off returns to 5.6.5.
+  static const bool phonePictureFollowsSource = true;
+
+  /// An unfolded foldable splits from [roomFoldableSplitMinWidth] for a
+  /// portrait stream (A07.5 c9). Off returns to 5.6.5's 840 only.
+  static const bool foldableSplitsFrom600 = true;
+
   /// The record or danmaku settings panel (U.2f); one at a time, and not
   /// together with the details.
   final RoomPanelController _panels = RoomPanelController();
@@ -337,8 +350,14 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
     // line lays the room out (3.x `LiveStreamGeometryHint`); the decoder's
     // wins once known.
     _detectedPortrait.value = session.state.expectsPortrait;
+    _detectedAspect.value = session.state.expectedAspectRatio;
     _shape = session.states.listen((state) {
       if (state.expectsPortrait != _detectedPortrait.value) _detectedPortrait.value = state.expectsPortrait;
+      // A replay reports its position every tick while its shape changes
+      // once (the declared ratio giving way to the decoded one): only a
+      // changed shape rebuilds the page.
+      final aspect = state.expectedAspectRatio;
+      if (aspect != _detectedAspect.value) _detectedAspect.value = aspect;
     });
     final autoFullscreen =
         store.settings.get(Settings.enableFullScreenDefault) ||
@@ -681,6 +700,7 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
     _swipe.dispose();
     _switchGroup.dispose();
     _detectedPortrait.dispose();
+    _detectedAspect.dispose();
     _guideReveal.dispose();
     _local?.dispose();
     _panels
@@ -1044,7 +1064,7 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
             child: KeyedSubtree(
               key: ValueKey(_roomEpoch),
               child: ListenableBuilder(
-                listenable: Listenable.merge([_orientation, _detectedPortrait]),
+                listenable: Listenable.merge([_orientation, _detectedPortrait, _detectedAspect]),
                 builder: (context, _) => _page(context, controller, settings),
               ),
             ),
@@ -1458,6 +1478,15 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
               mobile: _platform.mobile,
             );
             final portrait = _portraitStream(settings);
+            // A07.5 c9c: fullscreen, held sideways, halfway folded — the
+            // hinge divides the screen itself, so the picture goes above it
+            // and the chat below. Every other fullscreen keeps its layout.
+            final fold = _platform.mobile && _display == RoomDisplay.fullscreen && !portrait
+                ? tabletopFold(MediaQuery.displayFeaturesOf(context))
+                : null;
+            if (fold != null && arrangement == ControlsArrangement.landscape) {
+              return _tabletopFullscreen(controller, settings, constraints, fold: fold, keyboard: keyboard);
+            }
             final upright = arrangement == ControlsArrangement.portraitFullscreen;
             // U.2b2: the portrait fullscreen swipes through the list the room
             // came from, with its setting on.
@@ -1578,10 +1607,19 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
       final portrait = _portraitStream(settings);
       // Above the Scaffold, whose body no longer sees it (A07.18).
       final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+      final features = MediaQuery.displayFeaturesOf(context);
       final layout = roomPageLayout(
         width: page.maxWidth,
         height: page.maxHeight,
         mobile: _platform.mobile,
+        unfoldedFoldable:
+            foldableSplitsFrom600 &&
+            foldableWindow(
+              size: Size(page.maxWidth, page.maxHeight),
+              features: features,
+              mobile: _platform.mobile,
+            ),
+        portraitStream: portrait,
         portraitPanel: portraitPanelEligible(
           portraitStream: portrait,
           adaptation: settings.adaptation,
@@ -1694,7 +1732,14 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
     BoxConstraints constraints, {
     double keyboard = 0,
   }) {
-    final height = (constraints.maxWidth * 9 / 16).clamp(0.0, constraints.maxHeight * 0.6);
+    // The picture keeps the source's shape (A07.2): a 9:16 stream no longer
+    // sits in a 16:9 box with black bands (Issue #927). A 16:9 stream keeps
+    // exactly 5.6.5's height.
+    final height = phonePictureHeight(
+      width: constraints.maxWidth,
+      height: constraints.maxHeight,
+      aspectRatio: phonePictureFollowsSource ? _detectedAspect.value : null,
+    );
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -1741,6 +1786,75 @@ class _LivePlayPageState extends ConsumerState<LivePlayPage> with SingleTickerPr
         panels: _panelLayer(controller, portrait: true),
         keyboard: keyboard,
       );
+
+  /// Fullscreen, held sideways, halfway folded (A07.5 c9c): the hinge splits
+  /// the screen itself, so the picture takes the upper pane and the chat list
+  /// the lower one, and the hinge band stays black. Only a fullscreen room
+  /// gets here; the page keeps its own layouts. The quality and line move
+  /// into the picture's bars, as in the landscape fullscreen, so the chat
+  /// keeps every line it can. Panels stay under the picture.
+  Widget _tabletopFullscreen(
+    LiveRoomController controller,
+    _LayoutSettings settings,
+    BoxConstraints constraints, {
+    required Rect fold,
+    double keyboard = 0,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    // Feature bounds are in window coordinates; scale their position onto
+    // the body's height (which excludes the app bar) instead of subtracting
+    // an inset that differs between Android releases.
+    final window = MediaQuery.sizeOf(context).height;
+    final share = window > 0 ? (fold.center.dy / window).clamp(0.35, 0.65) : 0.5;
+    final top = (constraints.maxHeight * share).clamp(0.0, constraints.maxHeight * 0.8);
+    final gap = fold.height.clamp(0.0, 32.0);
+    final player = _player(
+      controller,
+      settings,
+      arrangement: ControlsArrangement.landscape,
+      onTitle: _toggleDetails,
+      pickersInBar: true,
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Column(
+          key: const ValueKey('live-play-tabletop-split'),
+          children: [
+            SizedBox(
+              key: const ValueKey('live-play-tabletop-picture'),
+              height: top,
+              child: ColoredBox(color: OnVideoColors.ground, child: player),
+            ),
+            SizedBox(height: gap, child: const ColoredBox(color: OnVideoColors.ground)),
+            Expanded(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: scheme.outlineVariant)),
+                ),
+                child: _withDetails(
+                  controller,
+                  ListenableSelector<bool>(
+                    listenable: controller,
+                    selector: () => controller.isArchive,
+                    builder: (context, archive, _) => archive
+                        ? RoomReplayLibrary(controller: controller)
+                        : ChatList(controller: controller, memory: _memory),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        _panelUnderPicture(
+          controller,
+          top: top + gap,
+          keyboard: keyboard,
+          key: const ValueKey('live-play-tabletop-panel'),
+        ),
+      ],
+    );
+  }
 
   /// A07.17 c2 (choice A): a phone held sideways, not in fullscreen. The
   /// picture takes the full height under the app bar; on its right only the
