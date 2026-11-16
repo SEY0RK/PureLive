@@ -26,9 +26,15 @@ String splashInitialLocation(SettingsStore settings) =>
 /// no overshoot, so they are whole when the page leaves; 3.x's 2 s fade left
 /// at a third), 16 apart, over the theme's surface with a touch of the
 /// primary container at the lower right (3.x: a fixed cyan gradient), and a
-/// progress bar in the primary colour. Home replaces it after [duration]
-/// (3.x: one second), or at once on a tap or any key, after waiting at most
-/// [splashFollowWait] for the first follow check.
+/// progress bar in the primary colour. The page leaves to the left after
+/// [duration] (3.x: one second), or at once on a tap or any key, after
+/// waiting at most [splashFollowWait] for the first follow check.
+///
+/// It is home's child route (`buildAppRouter`), not a page before home, and
+/// its route is see-through ([SplashRoutePage]): the second it is up is spent
+/// building, laying out and painting home, and loading its follows and
+/// covers, so the reveal only moves this page away from a page that is ready
+/// (A06.4, R01.3).
 class SplashPage extends StatefulWidget {
   /// Creates the page for [route].
   const new({required this.route, this.duration = const Duration(seconds: 1), super.key});
@@ -44,6 +50,37 @@ class SplashPage extends StatefulWidget {
 
   @override
   State<SplashPage> createState() => _SplashPageState();
+}
+
+/// The splash page's page: its route does not hide home under it.
+///
+/// An opaque route is kept built but never laid out, and a grid builds its
+/// cards while it lays out. See-through, it keeps home on stage: the second
+/// the splash is up is spent building, laying out and painting home, and
+/// loading its follows and covers, so the reveal has only to move the splash
+/// away from a page that is ready (A06.4, R01.3).
+class SplashRoutePage extends Page<Object?> {
+  /// Creates the page for [child].
+  const new({required this.child, super.key, super.name, super.arguments});
+
+  /// The splash page itself.
+  final Widget child;
+
+  @override
+  Route<Object?> createRoute(BuildContext context) => _SplashRoute(this);
+}
+
+/// [SplashRoutePage]'s route: [SplashExitTransition], see-through.
+class _SplashRoute extends PageRouteBuilder<Object?> {
+  _SplashRoute(SplashRoutePage page)
+    : super(
+        settings: page,
+        opaque: false,
+        transitionDuration: SplashExitTransition.duration,
+        reverseTransitionDuration: SplashExitTransition.duration,
+        pageBuilder: (_, _, _) => page.child,
+        transitionsBuilder: (_, animation, _, child) => SplashExitTransition(animation: animation, child: child),
+      );
 }
 
 class _SplashPageState extends State<SplashPage> with SingleTickerProviderStateMixin {

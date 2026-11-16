@@ -82,6 +82,43 @@ class SpringPageTransition extends StatelessWidget {
   }
 }
 
+/// The splash page leaving to the leading side (A06.4): the start-up's
+/// reveal, where home is already built under it (its router nests the two
+/// routes in one location, R01.3), so the first frames of the animation do
+/// not carry home's first build, its follows and its covers.
+///
+/// Only this page moves, with a slide and without a fade, and the page under
+/// it is left to its own transition: two full pages painted a frame at a
+/// time is what the spring's fade-forwards predecessor cost.
+class SplashExitTransition extends StatelessWidget {
+  /// Creates the transition.
+  const new({required this.animation, required this.child, super.key});
+
+  /// How long the splash takes to leave: the push's 450 ms.
+  static const Duration duration = SpringPageTransitionsBuilder.duration;
+
+  /// This page leaving (1 → 0).
+  final Animation<double> animation;
+
+  /// The page.
+  final Widget child;
+
+  // The spring as it comes back: fast as it lets go, settling at the end
+  // (the push's curve, turned around).
+  static final Curve _out = SpringCurve(AppMotion.pageTransitionSpring, duration).flipped;
+
+  @override
+  Widget build(BuildContext context) {
+    final rtl = Directionality.of(context) == TextDirection.rtl;
+    return SlideTransition(
+      position: animation
+          .drive(CurveTween(curve: _out))
+          .drive(Tween(begin: Offset(rtl ? 1 : -1, 0), end: Offset.zero)),
+      child: child,
+    );
+  }
+}
+
 /// A shadow just outside the leading edge of a page sliding in, fading as
 /// it settles: a gradient, cheaper than a blurred shadow.
 class _EdgeShadowPainter extends CustomPainter {

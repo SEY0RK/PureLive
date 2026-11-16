@@ -1,11 +1,17 @@
 /// Route paths, unchanged from 3.x (`lib/routes/route_path.dart`), so links
-/// and the pages' calls keep working.
+/// and the pages' calls keep working. The one exception is [kSplash]: it is
+/// home's child here, so that home is already built when the splash leaves
+/// (A06.4, R01.3); no link pointed at it.
 abstract final class RoutePath {
-  /// Splash page.
-  static const kSplash = '/splash';
-
   /// Home.
   static const kInitial = '/home';
+
+  /// The splash page's segment under home ([kSplash]).
+  static const kSplashSegment = 'splash';
+
+  /// Splash page, home's child: one location builds both, so the reveal is a
+  /// page leaving over a page that is ready instead of home's first frame.
+  static const kSplash = '$kInitial/$kSplashSegment';
 
   /// Follows.
   static const kFavorite = '/favorite';

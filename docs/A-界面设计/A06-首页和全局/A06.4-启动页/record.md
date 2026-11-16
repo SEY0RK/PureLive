@@ -43,3 +43,23 @@
 - `test/features/splash/splash_page_test.dart`：3 → 8 个：0.4 秒内透明度只增、放大不超过 1、0.4 秒时完整；图标 150、文字在图标下 16、进度条 200 宽在文字下 32、主色和 15% 底轨、没有“纯粹直播”；浅色和深色的背景都取主题颜色（没有 3.x 的青色）；电脑按任意键进首页。原有三个照旧。
 - `test/shared/app_prompts_test.dart` 的排队部分 2 个：第二个提示等第一个关掉、口令导入插到新版本前面、返回顺序；没到时机的提示在页面变化后才弹。
 - `update_dialogs_test.dart` 里“另一个页面在上面时新版本不弹，回到首页才弹”1 个（总数见 A06.3）。
+
+## 2026-11-16 启动页改成首页的子路由（Windows 上启动时转场顿卡）
+
+现象（Windows 便携版）：启动页停一秒后左滑进首页，动画头几帧顿。
+
+原因：启动页原来是首页**前面**的一个路由，两页不在同一个位置，所以首页整个第一帧都落在那 450 毫秒动画里——整棵树第一次 build、第一次 layout、第一次 paint，关注列表的第一次核验结果正好在这几百毫秒里落地并把整页重建一遍，封面也从这时才开始解码上传。启动页那一秒是白等的：它盖着的时候首页一行都还没建。
+
+改动：
+
+- `apps/pure_live/lib/routes/route_path.dart`：`kSplash` 从 `/splash` 改成 `/home/splash`（`kInitial` + `kSplashSegment`），是首页的子路由，一个位置同时建两页；没有别的地方链到 `/splash`。
+- `apps/pure_live/lib/routes/app_router.dart`：新增 `splashRoute()`，挂在 `kInitial` 的 `routes` 下（`pageRoutes` 里删掉 `kSplash`）；`apps/pure_live/lib/routes/tv_router.dart` 同样挂一次。
+- `apps/pure_live/lib/features/splash/splash_page.dart`：新增 `SplashRoutePage` / `_SplashRoute`，启动页的路由**半透明**（`opaque: false`）。这一条是关键：不透明的话，下面的首页虽然建好了，但 Flutter 不给不在台上的页量尺寸，而网格的卡片是在量尺寸时才建的；半透明让首页一直在台上，启动页那一秒里首页就建完、量完、画完，关注列表落地和封面解码上传也都在这一秒里。
+- `packages/live_ui/lib/src/theme/page_transitions.dart`：新增 `SplashExitTransition`，只有启动页往左整页滑出（450 毫秒，同一个弹簧，不淡入淡出，不给下面的页加阴影），下面的页按它自己的转场回位。
+- `apps/pure_live/lib/features/home/home_page.dart`：命令行给的房间等启动页退场再开（`_roomAfterReveal`，`didPopNext` 里放）——现在就开会盖住启动页，再被启动页“回首页”冲掉。
+
+手感变了：以前是启动页退 1/4、首页从右边推进来；现在是启动页整页滑出左边、首页从左边 1/4 处回位并变亮。
+
+计时：`home` 仍然是首页到顶（启动页退场）的时刻；但首页在下面已经开始出内容，所以 `firstPage` 现在可能比 `home` 早（以前一定在它之后）。要量“用户看到内容”的时刻，看 `home`。提示排队照旧：路由观察者看到的当前路由还是 `kSplash`，启动页在的时候不会弹（`ready` 看的是首页 `isCurrent`）。
+
+测试：`packages/live_ui/test/page_transitions_test.dart` +1：启动页在第一帧就往左边走了 100 以上、没有 `OpacityLayer`、退完下面的页回到原位、时长等于推入的 450 毫秒。`apps/pure_live/test/features/splash/splash_page_test.dart` +1：启动页的路由 `opaque` 为假（首页才会被量、被画）、退场时长等于转场时长；其余 8 个没改（它们自己搭路由，行为照旧）。

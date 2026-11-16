@@ -34,9 +34,9 @@ typedef HomeTabBuilder = Widget Function(BuildContext context, HomeMenu menu);
 /// Kept from 3.x: selecting follows again refreshes them; back sends the app
 /// to the background on Android; after 15 s or more in the background the
 /// visible tab refreshes; a room given on the command line opens once the
-/// page is up; the main window checks for an update
-/// [startupUpdateCheckDelay] after its first frame. The update prompt opens
-/// only while home is on top, after any other prompt (U.3c c7).
+/// page is up and the splash page has left; the main window checks for an
+/// update [startupUpdateCheckDelay] after its first frame. The update prompt
+/// opens only while home is on top, after any other prompt (U.3c c7).
 class HomePage extends ConsumerStatefulWidget {
   /// Creates the page.
   const new({this.tabBuilder = buildHomeTab, super.key});
@@ -60,6 +60,10 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
   Size? _lastLayoutSize;
   PageRoute<dynamic>? _route;
 
+  /// A room given on the command line, waiting for the splash page to leave
+  /// (A06.4: home is built under it, so its first frame is not the reveal).
+  void Function()? _roomAfterReveal;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -80,7 +84,14 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
   void didPushNext() => _restoreNavigation();
 
   @override
-  void didPopNext() => _restoreNavigation();
+  void didPopNext() {
+    _restoreNavigation();
+    final open = _roomAfterReveal;
+    if (open != null) {
+      _roomAfterReveal = null;
+      open();
+    }
+  }
 
   bool _navigationScroll(ScrollNotification notification) {
     if (!_navigationCanHide ||
@@ -115,7 +126,17 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
       // (A06.5).
       if (Platform.isAndroid) unawaited(SystemUiVisibility.restore());
       final launch = ref.read(appServicesProvider).launch;
-      if (launch.room case final room?) unawaited(AppNavigator.toLiveRoomDetail(liveRoom: room));
+      if (launch.room case final room?) {
+        void open() => unawaited(AppNavigator.toLiveRoomDetail(liveRoom: room));
+        // A06.4: with the splash page on, home is built under it. Opening the
+        // room now would cover the splash and the splash page's own "go home"
+        // would drop it, so it waits for the reveal.
+        if (_route?.isCurrent ?? true) {
+          open();
+        } else {
+          _roomAfterReveal = open;
+        }
+      }
       if (launch.isPrimary) _updateTimer = Timer(startupUpdateCheckDelay, _checkForUpdate);
     });
   }

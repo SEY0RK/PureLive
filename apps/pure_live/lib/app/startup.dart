@@ -258,8 +258,9 @@ String formatStartupTiming({
 ///   afterwards);
 /// * areas or the recording centre as the first home tab, and the TV
 ///   interface: home's first frame (their pages do not report);
-/// * with the splash page on, home is built only once the splash page has
-///   left, so its content always comes after it.
+/// * with the splash page on, home is built under it (A06.4), so a tab that
+///   reports for itself can be drawn before the splash page has left; `home`
+///   stays the moment home is on top.
 ///
 /// Everything is measured from `main`; the clock and the native side are
 /// replaceable for tests.

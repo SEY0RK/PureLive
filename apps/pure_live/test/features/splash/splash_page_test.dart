@@ -56,6 +56,24 @@ void main() {
     expect(splashInitialLocation(store.settings), RoutePath.kInitial);
   });
 
+  testWidgets('the splash route is see-through, so home is laid out under it (A06.4)', (tester) async {
+    late BuildContext context;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (value) {
+            context = value;
+            return const SizedBox.shrink();
+          },
+        ),
+      ),
+    );
+    final route = const SplashRoutePage(child: SizedBox.shrink()).createRoute(context);
+    expect((route as ModalRoute<Object?>).opaque, isFalse, reason: 'home is laid out and painted under it');
+    expect(route.transitionDuration, SplashExitTransition.duration);
+    expect(route.reverseTransitionDuration, SplashExitTransition.duration);
+  });
+
   testWidgets('shows the welcome and goes home after a second', (tester) async {
     await _pump(tester);
     expect(find.text('欢迎使用'), findsOneWidget);

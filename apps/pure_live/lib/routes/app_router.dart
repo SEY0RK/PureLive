@@ -41,7 +41,8 @@ typedef PageBuilder = Widget Function(RouteArgs route);
 
 /// 3.x's route table (`AppPages.routes`) besides home, in its order: every
 /// path points at the page class of its folder under `lib/pages/` (M13
-/// replaces the folders, never this table).
+/// replaces the folders, never this table). The splash page is not here: it
+/// is home's child ([splashRoute]).
 final Map<String, PageBuilder> pageRoutes = {
   RoutePath.kScreenMirror: (_) => const ScreenMirrorPage(),
   RoutePath.kSignIn: (route) => AuthPage(route: route),
@@ -95,7 +96,6 @@ final Map<String, PageBuilder> pageRoutes = {
   RoutePath.kSoop: (route) => AccountPage(route: route),
   RoutePath.kKuaishouCookie: (route) => AccountPage(route: route),
   RoutePath.kWebDavPage: (route) => WebDavPage(route: route),
-  RoutePath.kSplash: (route) => SplashPage(route: route),
   RoutePath.kVersionPage: (route) => VersionPage(route: route),
   RoutePath.kRecordPage: (route) => RecorderPage(route: route),
   RoutePath.kRecordSettings: (route) => buildSettingsRoutePage(route)!,
@@ -106,6 +106,22 @@ final Map<String, PageBuilder> pageRoutes = {
   RoutePath.kLocalInteraction: (route) => buildSettingsRoutePage(route)!,
   RoutePath.kLogs: (route) => buildSettingsRoutePage(route)!,
 };
+
+/// The splash page as a child of home ([RoutePath.kSplash] is
+/// `RoutePath.kInitial` + its segment, so both belong to one location).
+///
+/// Home is built, laid out and painted, and reads the follows and loads its
+/// covers, while the splash is still up: the reveal then moves a page away
+/// from a page that is ready, instead of carrying home's first frame inside
+/// the transition (A06.4, R01.3).
+GoRoute splashRoute() => GoRoute(
+  path: RoutePath.kSplashSegment,
+  pageBuilder: (context, state) => SplashRoutePage(
+    key: state.pageKey,
+    name: RoutePath.kSplash,
+    child: SplashPage(route: RouteArgs(RoutePath.kSplash, arguments: state.extra)),
+  ),
+);
 
 /// The router of home and [pageRoutes], starting at [initialLocation] (the
 /// app passes `splashInitialLocation`: the splash page when `showSplashPage`
@@ -123,6 +139,7 @@ GoRouter buildAppRouter({
       path: RoutePath.kInitial,
       pageBuilder: (context, state) =>
           MaterialPage<Object?>(key: state.pageKey, name: RoutePath.kInitial, child: const HomePage()),
+      routes: [splashRoute()],
     ),
     for (final MapEntry(key: path, value: builder) in pageRoutes.entries)
       GoRoute(

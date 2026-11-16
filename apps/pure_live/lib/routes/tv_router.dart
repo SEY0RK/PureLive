@@ -58,6 +58,8 @@ GoRouter buildTvRouter({
       path: RoutePath.kInitial,
       pageBuilder: (context, state) =>
           MaterialPage<Object?>(key: state.pageKey, name: RoutePath.kInitial, child: const TvHomePage()),
+      // A06.4, R01.3: the TV home is built under the splash page too.
+      routes: [splashRoute()],
     ),
     for (final MapEntry(key: path, value: builder) in {...pageRoutes, ...tvPageRoutes}.entries)
       GoRoute(

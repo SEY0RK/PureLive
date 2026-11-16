@@ -58,4 +58,42 @@ void main() {
     expect(find.text('second'), findsNothing);
     expect(tester.getTopLeft(find.text('first')).dx, 0);
   });
+
+  testWidgets('the splash leaves to the left, the page under it settled, without a fade (A06.4)', (tester) async {
+    tester.view
+      ..physicalSize = const Size(400, 800)
+      ..devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        theme: const LiveTheme().light.copyWith(platform: TargetPlatform.android),
+        home: const Scaffold(body: Text('home')),
+      ),
+    );
+    final home = tester.getTopLeft(find.text('home')).dx;
+    navigator.currentState!.push(
+      PageRouteBuilder<void>(
+        transitionDuration: SplashExitTransition.duration,
+        reverseTransitionDuration: SplashExitTransition.duration,
+        pageBuilder: (_, _, _) => const Scaffold(body: Text('splash')),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+            SplashExitTransition(animation: animation, child: child),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final splash = tester.getTopLeft(find.text('splash')).dx;
+    navigator.currentState!.pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    // The spring lets go at once: most of the way in the first frames, to the
+    // leading side and nothing else.
+    expect(tester.getTopLeft(find.text('splash')).dx, lessThan(splash - 100));
+    expect(tester.layers.whereType<OpacityLayer>(), isEmpty, reason: 'nothing fades');
+    await tester.pumpAndSettle();
+    expect(find.text('splash'), findsNothing);
+    expect(tester.getTopLeft(find.text('home')).dx, closeTo(home, 0.01));
+    expect(SplashExitTransition.duration, SpringPageTransitionsBuilder.duration);
+  });
 }
