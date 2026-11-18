@@ -233,6 +233,60 @@ List<Rect>? _squarishCells({
   return best;
 }
 
+/// The two cells of a 1×2 layout. Two equal 16:9 boxes are only one option:
+/// a portrait stream wants a tall column, and a wide picture wants a short
+/// row. Enumerate both splits and the splits that give either stream its own
+/// shape, then keep the one that shows most picture on this canvas.
+List<Rect>? _dualCells({
+  required Size inner,
+  required List<double> aspects,
+  required double gap,
+}) {
+  if (aspects.length != 2 || inner.width <= 0 || inner.height <= 0) return null;
+  for (final aspect in aspects) {
+    if (!aspect.isFinite || aspect <= 0) return null;
+  }
+  final width = inner.width, height = inner.height;
+  final minSide = math.min(width, height) * 0.12;
+  final candidates = <List<Rect>>[];
+
+  void columns(double left) {
+    if (left < minSide || width - left - gap < minSide) return;
+    candidates.add([
+      Rect.fromLTWH(0, 0, left, height),
+      Rect.fromLTWH(left + gap, 0, width - left - gap, height),
+    ]);
+  }
+
+  void rows(double top) {
+    if (top < minSide || height - top - gap < minSide) return;
+    candidates.add([
+      Rect.fromLTWH(0, 0, width, top),
+      Rect.fromLTWH(0, top + gap, width, height - top - gap),
+    ]);
+  }
+
+  columns((width - gap) / 2);
+  rows((height - gap) / 2);
+  for (final factor in [1.0, 0.82, 1.22]) {
+    columns((height * aspects[0] * factor).clamp(minSide, width - gap - minSide));
+    columns((width - gap - height * aspects[1] * factor).clamp(minSide, width - gap - minSide));
+    rows((width / aspects[0] * factor).clamp(minSide, height - gap - minSide));
+    rows((height - gap - width / aspects[1] * factor).clamp(minSide, height - gap - minSide));
+  }
+
+  List<Rect>? best;
+  var bestArea = -1.0;
+  for (final cells in candidates) {
+    final area = _visibleArea(cells, aspects);
+    if (area > bestArea) {
+      bestArea = area;
+      best = cells;
+    }
+  }
+  return best;
+}
+
 /// The template's cells for [aspects], in cell order, the height the four
 /// take at this width, and which cell got the large slot.
 (List<Rect>, double, int)? _templateCells({
@@ -326,6 +380,21 @@ final class WallGeometry {
     List<double>? aspects,
     int focused = 0,
   }) {
+    if (layout == MultiviewLayout.dual && aspects != null && aspects.length == 2) {
+      final across = math.max<double>(0, width - padding * 2);
+      final inner = Size(
+        across,
+        height.isFinite ? math.max<double>(0, height - padding * 2) : across * 9 / 16,
+      );
+      final dual = _dualCells(inner: inner, aspects: aspects, gap: gap);
+      if (dual != null) {
+        return WallGeometry(
+          size: Size(width, height.isFinite ? height : inner.height + padding * 2),
+          cells: [for (final rect in dual) rect.shift(Offset(padding, padding))],
+        );
+      }
+    }
+
     if (layout == MultiviewLayout.focus) {
       if (aspects != null && aspects.length == 4) {
         final across = math.max<double>(0, width - padding * 2);
@@ -338,7 +407,7 @@ final class WallGeometry {
           final (cells, contentHeight, largeCell) = template;
           return WallGeometry(
             size: Size(width, height.isFinite ? height : contentHeight + padding * 2),
-            cells: cells,
+            cells: [for (final rect in cells) rect.shift(Offset(padding, padding))],
             largeCell: largeCell,
           );
         }
