@@ -233,9 +233,9 @@ List<Rect>? _squarishCells({
   return best;
 }
 
-/// The template's cells for [aspects], in cell order, and the height the
-/// four take at this width; null when nothing fits.
-(List<Rect>, double)? _templateCells({
+/// The template's cells for [aspects], in cell order, the height the four
+/// take at this width, and which cell got the large slot.
+(List<Rect>, double, int)? _templateCells({
   required List<double> aspects,
   required int focused,
   required Size inner,
@@ -254,27 +254,39 @@ List<Rect>? _squarishCells({
   final canvasAspect = inner.width / inner.height;
   if (canvasAspect >= 0.8 && canvasAspect <= 1.5) {
     final squarish = _squarishCells(inner: inner, aspects: aspects, focused: focused, gap: gap);
-    if (squarish != null) return (squarish, inner.height);
+    if (squarish != null) return (squarish, inner.height, focused);
   }
 
-  final slots = _slotsFor(portraits, aspects[focused] < 1);
-  if (slots == null) return null;
+  var chosen = _slotsFor(portraits, aspects[focused] < 1);
+  var largeIndex = focused;
+  if (canvasAspect > 1.5 && portraits == 1) {
+    // On a 16:9 canvas a 9:16 picture is height-bound at 607.5 × 1080: it is
+    // exactly as large in the 98 % layout's full-height column as in a
+    // 1280-wide "main" slot, which only adds black bars. Keep the efficient
+    // geometry; the focused picture stays main through the audio/focus mark.
+    chosen = _slotsFor(1, false);
+    for (var i = 0; i < 4; i++) {
+      if (i != focused && aspects[i] >= 1) {
+        largeIndex = i;
+        break;
+      }
+    }
+  }
+  if (chosen == null) return null;
 
   // The design's 1920 × 1080 coordinates are fractions: map them onto the
-  // actual canvas instead of fitting a 16:9 letterbox inside it. A foldable's
-  // inner screen is close to 1.1:1, so fitting would leave ~37 % of its
-  // height empty. The cells keep their own shape hint through [aspects];
-  // the video inside each is contained, never cropped.
-  // The focused cell takes the large slot; the others fill by shape, in order.
+  // actual canvas instead of fitting a 16:9 letterbox inside it.
+  // The cell with the large slot is [largeIndex], which on a wide 16:9 canvas
+  // with one portrait is a landscape cell, not the focused portrait.
   final queue = {true: <int>[], false: <int>[]};
   for (var i = 0; i < 4; i++) {
-    if (i != focused) queue[aspects[i] < 1]!.add(i);
+    if (i != largeIndex) queue[aspects[i] < 1]!.add(i);
   }
   final placed = List<Rect?>.filled(4, null);
-  for (final slot in slots) {
+  for (final slot in chosen) {
     final int index;
     if (slot.large) {
-      index = focused;
+      index = largeIndex;
     } else {
       final waiting = queue[slot.portrait]!;
       if (waiting.isEmpty) return null;
@@ -291,7 +303,7 @@ List<Rect>? _squarishCells({
     placed[index] = rect;
   }
   if (placed.contains(null)) return null;
-  return ([for (final rect in placed) rect!], inner.height);
+  return ([for (final rect in placed) rect!], inner.height, largeIndex);
 }
 
 
@@ -301,7 +313,7 @@ List<Rect>? _squarishCells({
 /// whichever shows larger pictures.
 final class WallGeometry {
   /// Creates the geometry.
-  const new({required this.size, required this.cells, this.rail, this.railVertical = false, this.railExtent = 0});
+  const new({required this.size, required this.cells, this.rail, this.railVertical = false, this.railExtent = 0, this.largeCell = 0});
 
   /// The cells of [layout] in `width` × `height` (an infinite height: as
   /// tall as the width wants); `gap` between cells and `padding` around them.
@@ -323,10 +335,11 @@ final class WallGeometry {
         );
         final template = _templateCells(aspects: aspects, focused: focused, inner: inner, gap: gap);
         if (template != null) {
-          final (cells, contentHeight) = template;
+          final (cells, contentHeight, largeCell) = template;
           return WallGeometry(
             size: Size(width, height.isFinite ? height : contentHeight + padding * 2),
             cells: cells,
+            largeCell: largeCell,
           );
         }
       }
@@ -423,6 +436,9 @@ final class WallGeometry {
 
   /// One rail item along the rail: a small cell and the gap after it.
   final double railExtent;
+
+  /// The cell that got the large rect in a 1+3 template; 0 elsewhere.
+  final int largeCell;
 
   /// The width the cells take (the wall without its empty sides).
   double get contentWidth {
