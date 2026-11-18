@@ -115,6 +115,124 @@ List<_Slot>? _slotsFor(int portraits, bool largePortrait) => switch ((portraits,
   _ => null,
 };
 
+/// Splits a strip into pieces, along its width ([vertical] false) or height.
+/// [weights] are the preferred extents; the gaps are taken out first.
+List<Rect> _splitStrip(Rect strip, List<double> weights, {required bool vertical, required double gap}) {
+  final total = weights.fold<double>(0, (a, b) => a + b);
+  if (total <= 0 || weights.isEmpty) return [strip];
+  final extent = vertical ? strip.height : strip.width;
+  final usable = extent - gap * (weights.length - 1);
+  if (usable <= 0) return [strip];
+  final out = <Rect>[];
+  var at = vertical ? strip.top : strip.left;
+  for (final weight in weights) {
+    final length = usable * weight / total;
+    out.add(vertical
+        ? Rect.fromLTWH(strip.left, at, strip.width, length)
+        : Rect.fromLTWH(at, strip.top, length, strip.height));
+    at += length + gap;
+  }
+  return out;
+}
+
+/// How much picture the cells actually show in [rects], given the shapes the
+/// streams want. Used only to choose between candidates, never to crop.
+double _visibleArea(List<Rect> rects, List<double> aspects) {
+  var total = 0.0;
+  for (var i = 0; i < rects.length; i++) {
+    final shape = rects[i].width / rects[i].height;
+    if (!shape.isFinite || shape <= 0) return -1;
+    total += rects[i].width * rects[i].height * math.min(aspects[i] / shape, shape / aspects[i]);
+  }
+  return total;
+}
+
+/// A foldable's unfolded inner screen is close to 1.1:1 (squarish), not 16:9.
+/// Compose the four cells from the canvas itself: the large one keeps the
+/// shape of its stream, the other three take the rest in a strip or a grid.
+/// Null when no candidate can keep the large cell clearly larger.
+List<Rect>? _squarishCells({
+  required Size inner,
+  required List<double> aspects,
+  required int focused,
+  required double gap,
+}) {
+  if (inner.width <= 0 || inner.height <= 0) return null;
+  final others = [for (var i = 0; i < 4; i++) if (i != focused) i];
+  final mainAspect = aspects[focused];
+  final candidates = <List<Rect>>[];
+
+  // Large picture across the top, three below it.
+  final topHeight = (inner.width / mainAspect).clamp(inner.height * 0.3, inner.height * 0.72);
+  final top = Rect.fromLTWH(0, 0, inner.width, topHeight);
+  final below = Rect.fromLTWH(0, topHeight + gap, inner.width, inner.height - topHeight - gap);
+  if (below.height > 0) {
+    final belowRects = _splitStrip(below, [for (final i in others) aspects[i]], vertical: false, gap: gap);
+    if (belowRects.length == others.length) {
+      final cells = List<Rect?>.filled(4, null);
+      cells[focused] = top;
+      for (var k = 0; k < others.length; k++) {
+        cells[others[k]] = belowRects[k];
+      }
+      if (!cells.contains(null)) candidates.add([for (final rect in cells) rect!]);
+    }
+  }
+
+  // Large picture down the left side, three beside it.
+  final leftWidth = (inner.height * mainAspect).clamp(inner.width * 0.3, inner.width * 0.72);
+  final left = Rect.fromLTWH(0, 0, leftWidth, inner.height);
+  final beside = Rect.fromLTWH(leftWidth + gap, 0, inner.width - leftWidth - gap, inner.height);
+  if (beside.width > 0) {
+    final besideRects = _splitStrip(beside, [for (final i in others) 1 / aspects[i]], vertical: true, gap: gap);
+    if (besideRects.length == others.length) {
+      final cells = List<Rect?>.filled(4, null);
+      cells[focused] = left;
+      for (var k = 0; k < others.length; k++) {
+        cells[others[k]] = besideRects[k];
+      }
+      if (!cells.contains(null)) candidates.add([for (final rect in cells) rect!]);
+    }
+  }
+
+  // A full-height column for the large picture, the three others in a
+  // 2 × 2 grid with the spare cell empty (the best fit for three portraits).
+  final columnWidth = (inner.height * mainAspect).clamp(inner.width * 0.3, inner.width * 0.72);
+  final column = Rect.fromLTWH(0, 0, columnWidth, inner.height);
+  final rest = Rect.fromLTWH(columnWidth + gap, 0, inner.width - columnWidth - gap, inner.height);
+  if (rest.width > 0 && others.length == 3) {
+    const grid = [0, 1, 2, 3];
+    final cells = List<Rect?>.filled(4, null);
+    cells[focused] = column;
+    for (var k = 0; k < 3; k++) {
+      final slot = grid[k];
+      cells[others[k]] = Rect.fromLTWH(
+        rest.left + (slot % 2) * (rest.width + gap) / 2,
+        rest.top + (slot ~/ 2) * (rest.height + gap) / 2,
+        (rest.width - gap) / 2,
+        (rest.height - gap) / 2,
+      );
+    }
+    if (!cells.contains(null)) candidates.add([for (final rect in cells) rect!]);
+  }
+
+  List<Rect>? best;
+  var bestArea = -1.0;
+  for (final cells in candidates) {
+    final large = cells[focused].width * cells[focused].height;
+    var largestOther = 0.0;
+    for (final i in others) {
+      largestOther = math.max(largestOther, cells[i].width * cells[i].height);
+    }
+    if (large < largestOther * 1.15) continue;
+    final area = _visibleArea(cells, aspects);
+    if (area > bestArea) {
+      bestArea = area;
+      best = cells;
+    }
+  }
+  return best;
+}
+
 /// The template's cells for [aspects], in cell order, and the height the
 /// four take at this width; null when nothing fits.
 (List<Rect>, double)? _templateCells({
@@ -130,18 +248,27 @@ List<_Slot>? _slotsFor(int portraits, bool largePortrait) => switch ((portraits,
     if (!aspect.isFinite || aspect <= 0) return null;
     if (aspect < 1) portraits++;
   }
+
+  // A foldable's inner screen, a tablet in square-ish proportions and a
+  // rotated phone all need the canvas itself to decide where the cells go.
+  final canvasAspect = inner.width / inner.height;
+  if (canvasAspect >= 0.8 && canvasAspect <= 1.5) {
+    final squarish = _squarishCells(inner: inner, aspects: aspects, focused: focused, gap: gap);
+    if (squarish != null) return (squarish, inner.height);
+  }
+
   final slots = _slotsFor(portraits, aspects[focused] < 1);
   if (slots == null) return null;
 
-  final scale = math.min(inner.width / 1920, inner.height / 1080);
-  if (!scale.isFinite || scale <= 0) return null;
-  final originX = (inner.width - 1920 * scale) / 2;
-  final originY = (inner.height - 1080 * scale) / 2;
-
+  // The design's 1920 × 1080 coordinates are fractions: map them onto the
+  // actual canvas instead of fitting a 16:9 letterbox inside it. A foldable's
+  // inner screen is close to 1.1:1, so fitting would leave ~37 % of its
+  // height empty. The cells keep their own shape hint through [aspects];
+  // the video inside each is contained, never cropped.
   // The focused cell takes the large slot; the others fill by shape, in order.
   final queue = {true: <int>[], false: <int>[]};
   for (var i = 0; i < 4; i++) {
-    if (i != focused) queue[aspects[i] < 1 ? true : false]!.add(i);
+    if (i != focused) queue[aspects[i] < 1]!.add(i);
   }
   final placed = List<Rect?>.filled(4, null);
   for (final slot in slots) {
@@ -155,16 +282,16 @@ List<_Slot>? _slotsFor(int portraits, bool largePortrait) => switch ((portraits,
     }
     if (placed[index] != null) return null;
     final rect = Rect.fromLTWH(
-      originX + slot.left * scale,
-      originY + slot.top * scale,
-      slot.width * scale,
-      slot.height * scale,
+      slot.left / 1920 * inner.width,
+      slot.top / 1080 * inner.height,
+      slot.width / 1920 * inner.width,
+      slot.height / 1080 * inner.height,
     ).deflate(gap / 2);
     if (rect.width <= 0 || rect.height <= 0) return null;
     placed[index] = rect;
   }
   if (placed.contains(null)) return null;
-  return ([for (final rect in placed) rect!], 1080 * scale);
+  return ([for (final rect in placed) rect!], inner.height);
 }
 
 
