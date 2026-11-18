@@ -154,6 +154,11 @@ final class MultiviewCell {
   /// The session's state, idle when there is none.
   PlaybackState get playback => _session?.state ?? const PlaybackState();
 
+  /// The shape the cell's picture wants (width over height): what the line
+  /// declared before it plays, else what the engine measured, else 16:9.
+  /// The wall uses it to give a portrait picture a portrait cell.
+  double get layoutAspect => playback.declaredAspectRatio ?? playback.aspectRatio ?? 16 / 9;
+
   bool _offscreen = false;
 
   /// Scrolled out of sight (a small cell of the focus layout): the video is
