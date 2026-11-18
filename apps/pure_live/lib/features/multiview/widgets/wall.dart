@@ -25,6 +25,7 @@ class MultiviewWall extends StatefulWidget {
     this.gap = 3,
     this.padding = 3,
     this.avoid,
+    this.aspects,
     super.key,
   });
 
@@ -55,6 +56,10 @@ class MultiviewWall extends StatefulWidget {
   /// A button over the wall (its top-left exit) the cells' marks keep clear
   /// of, in the wall's coordinates.
   final Rect? avoid;
+
+  /// The shape each cell's picture wants (width over height), in cell order;
+  /// null or a short list keeps 16:9 cells.
+  final List<double>? aspects;
 
   @override
   State<MultiviewWall> createState() => _MultiviewWallState();
@@ -119,6 +124,8 @@ class _MultiviewWallState extends State<MultiviewWall> {
           height: constraints.maxHeight,
           gap: widget.gap,
           padding: widget.padding,
+          aspects: widget.aspects,
+          focused: widget.focused,
         );
         final count = widget.count;
         final children = <Widget>[];
@@ -130,7 +137,11 @@ class _MultiviewWallState extends State<MultiviewWall> {
             children.add(
               Positioned.fromRect(
                 rect: rect,
-                child: widget.cellBuilder(i, large: false, nameInset: _inset(rect)),
+                child: widget.cellBuilder(
+                  i,
+                  large: widget.layout == MultiviewLayout.focus && i == widget.focused,
+                  nameInset: _inset(rect),
+                ),
               ),
             );
           }
