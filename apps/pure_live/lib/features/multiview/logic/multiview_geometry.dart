@@ -80,12 +80,14 @@ List<_Slot>? _slotsFor(int portraits, bool largePortrait) => switch ((portraits,
     _Slot(0, 720, 640, 360),
     _Slot(640, 720, 640, 360),
   ],
-  // 3 landscape + 1 portrait, the portrait large: it keeps the 2/3 slot
-  // (65.0 % of the screen, the chosen version) and the three stay 16:9.
+  // 3 landscape + 1 portrait, the portrait focused: the mirror of the
+  // landscape-large template. The portrait keeps its full-height column on
+  // the LEFT (the main side in every template), the three landscapes take the
+  // right: one above, two below. Same 98.3 % of picture as (1, false).
   (1, true) => const [
-    _Slot(0, 0, 1280, 1080, portrait: true, large: true),
-    _Slot(1280, 0, 640, 360),
-    _Slot(1280, 360, 640, 360),
+    _Slot(0, 0, 640, 1080, portrait: true, large: true),
+    _Slot(640, 0, 1280, 720),
+    _Slot(640, 720, 640, 360),
     _Slot(1280, 720, 640, 360),
   ],
   // 2 + 2, the portrait large: two portrait columns, the landscapes right.
@@ -312,26 +314,21 @@ List<Rect>? _dualCells({
   }
 
   var chosen = _slotsFor(portraits, aspects[focused] < 1);
-  var largeIndex = focused;
+  // On a 16:9 canvas, one portrait + three landscapes has two mirrored
+  // templates: the focused stream's shape picks which side its column is on.
+  // Which of the three landscapes is focused is not forced — any of them can
+  // take the large slot, so tapping 1, 2 or 3 always moves that picture.
   if (canvasAspect > 1.5 && portraits == 1) {
-    // On a 16:9 canvas a 9:16 picture is height-bound at 607.5 × 1080: it is
-    // exactly as large in the 98 % layout's full-height column as in a
-    // 1280-wide "main" slot, which only adds black bars. Keep the efficient
-    // geometry; the focused picture stays main through the audio/focus mark.
-    chosen = _slotsFor(1, false);
-    for (var i = 0; i < 4; i++) {
-      if (i != focused && aspects[i] >= 1) {
-        largeIndex = i;
-        break;
-      }
-    }
+    chosen = _slotsFor(1, aspects[focused] < 1);
   }
   if (chosen == null) return null;
 
+  // The focused cell takes the large slot — whichever of the four it is.
+  var largeIndex = focused;
   // The design's 1920 × 1080 coordinates are fractions: map them onto the
   // actual canvas instead of fitting a 16:9 letterbox inside it.
-  // The cell with the large slot is [largeIndex], which on a wide 16:9 canvas
-  // with one portrait is a landscape cell, not the focused portrait.
+  // The cell with the large slot is [largeIndex] (the focused one); the
+  // others fill by shape, in order.
   final queue = {true: <int>[], false: <int>[]};
   for (var i = 0; i < 4; i++) {
     if (i != largeIndex) queue[aspects[i] < 1]!.add(i);
