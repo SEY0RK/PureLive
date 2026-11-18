@@ -139,7 +139,8 @@ class _MultiviewWallState extends State<MultiviewWall> {
                 rect: rect,
                 child: widget.cellBuilder(
                   i,
-                  large: widget.layout == MultiviewLayout.focus && i == widget.focused,
+                  large: widget.layout == MultiviewLayout.focus &&
+                      (i == geometry.largeCell || i == widget.focused),
                   nameInset: _inset(rect),
                 ),
               ),
