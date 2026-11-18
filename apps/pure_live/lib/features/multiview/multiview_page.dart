@@ -840,6 +840,7 @@ class _MultiviewPageState extends ConsumerState<MultiviewPage> {
       gap: gap,
       padding: gap,
       avoid: avoid,
+      aspects: [for (final cell in _controller.cells) cell.layoutAspect],
       onAddCell: _controller.canAddCell ? _controller.addCell : null,
       onOffscreen: _setOffscreen,
       cellBuilder: _cell,
