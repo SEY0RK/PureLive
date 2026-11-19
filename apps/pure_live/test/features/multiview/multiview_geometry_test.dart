@@ -84,4 +84,67 @@ void main() {
     expect(focus.rail!.height, moreOrLessEquals(focus.cells.single.height));
     expect(focus.rail!.width / (focus.railExtent - 3), moreOrLessEquals(16 / 9, epsilon: 0.01));
   });
+
+  test('1×2 keeps equal halves with two portrait streams', () {
+    final wall = WallGeometry.of(
+      MultiviewLayout.dual,
+      width: 393,
+      height: 393,
+      aspects: const [9 / 16, 9 / 16],
+    );
+    expect(wall.cells, hasLength(2));
+    expect(wall.cells[0].width, moreOrLessEquals(wall.cells[1].width, epsilon: 0.01));
+    expect(wall.cells[0].height, moreOrLessEquals(wall.cells[1].height, epsilon: 0.01));
+    for (final rect in wall.cells) {
+      expect(rect.height / rect.width, greaterThan(1.4), reason: '$rect');
+    }
+    expect(wall.contentHeight, greaterThan(300));
+  });
+
+  test('immersive portrait 1+3 composes four cells from the tall canvas', () {
+    const aspects = [9 / 16, 16 / 9, 16 / 9, 16 / 9];
+    final wall = WallGeometry.of(
+      MultiviewLayout.focus,
+      width: 480,
+      height: 1040,
+      aspects: aspects,
+    );
+    expect(wall.cells, hasLength(4));
+    expect(wall.rail, isNull);
+    expect(wall.largeCell, 0);
+    for (final rect in wall.cells) {
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.top, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(480));
+      expect(rect.bottom, lessThanOrEqualTo(1040));
+      expect(rect.width, greaterThan(480 * 0.12), reason: '$rect');
+      expect(rect.height, greaterThan(1040 * 0.05), reason: '$rect');
+    }
+    // The portrait main keeps its own shape instead of a stretched strip.
+    expect(wall.cells[0].width / wall.cells[0].height, closeTo(9 / 16, 0.08));
+    for (var i = 1; i < 4; i++) {
+      expect(
+        wall.cells[0].width * wall.cells[0].height,
+        greaterThan(wall.cells[i].width * wall.cells[i].height * 1.05),
+      );
+    }
+  });
+
+  test('immersive portrait 1+3 follows the focused cell', () {
+    const aspects = [16 / 9, 9 / 16, 16 / 9, 16 / 9];
+    final wall = WallGeometry.of(
+      MultiviewLayout.focus,
+      width: 480,
+      height: 1040,
+      aspects: aspects,
+      focused: 1,
+    );
+    expect(wall.cells, hasLength(4));
+    expect(wall.largeCell, 1);
+    final main = wall.cells[1];
+    expect(main.width / main.height, closeTo(9 / 16, 0.08));
+    for (final i in [0, 2, 3]) {
+      expect(main.width * main.height, greaterThan(wall.cells[i].width * wall.cells[i].height));
+    }
+  });
 }
