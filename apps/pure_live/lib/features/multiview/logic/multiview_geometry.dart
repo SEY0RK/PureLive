@@ -249,32 +249,41 @@ List<Rect>? _dualCells({
     if (!aspect.isFinite || aspect <= 0) return null;
   }
   final width = inner.width, height = inner.height;
-  final minSide = math.min(width, height) * 0.12;
-  final candidates = <List<Rect>>[];
+  // Two cells must share the distortion. Scoring raw visible area alone picks
+  // a 90 % / 10 % split on a 16:9 window — one picture huge, the other a
+  // sliver — because the big cell's pixels dominate the score. A cell may
+  // only take its native shape when the other still gets 35 % of the canvas.
+  final fair = math.min(width, height) * 0.35;
+  final candidates = <List<Rect>>[
+    [
+      Rect.fromLTWH(0, 0, (width - gap) / 2, height),
+      Rect.fromLTWH((width + gap) / 2, 0, (width - gap) / 2, height),
+    ],
+    [
+      Rect.fromLTWH(0, 0, width, (height - gap) / 2),
+      Rect.fromLTWH(0, (height + gap) / 2, width, (height - gap) / 2),
+    ],
+  ];
 
-  void columns(double left) {
-    if (left < minSide || width - left - gap < minSide) return;
-    candidates.add([
-      Rect.fromLTWH(0, 0, left, height),
-      Rect.fromLTWH(left + gap, 0, width - left - gap, height),
-    ]);
-  }
-
-  void rows(double top) {
-    if (top < minSide || height - top - gap < minSide) return;
-    candidates.add([
-      Rect.fromLTWH(0, 0, width, top),
-      Rect.fromLTWH(0, top + gap, width, height - top - gap),
-    ]);
-  }
-
-  columns((width - gap) / 2);
-  rows((height - gap) / 2);
-  for (final factor in [1.0, 0.82, 1.22]) {
-    columns((height * aspects[0] * factor).clamp(minSide, width - gap - minSide));
-    columns((width - gap - height * aspects[1] * factor).clamp(minSide, width - gap - minSide));
-    rows((width / aspects[0] * factor).clamp(minSide, height - gap - minSide));
-    rows((height - gap - width / aspects[1] * factor).clamp(minSide, height - gap - minSide));
+  for (var i = 0; i < 2; i++) {
+    final aspect = aspects[i];
+    if (aspect < 1) {
+      // A portrait stream first: a full-height column at its own width.
+      final column = height * aspect;
+      if (column >= fair && width - column - gap >= fair) {
+        candidates.add(i == 0
+            ? [Rect.fromLTWH(0, 0, column, height), Rect.fromLTWH(column + gap, 0, width - column - gap, height)]
+            : [Rect.fromLTWH(0, 0, width - column - gap, height), Rect.fromLTWH(width - column, 0, column, height)]);
+      }
+    } else {
+      // A landscape stream first: a full-width row at its own height.
+      final row = width / aspect;
+      if (row >= fair && height - row - gap >= fair) {
+        candidates.add(i == 0
+            ? [Rect.fromLTWH(0, 0, width, row), Rect.fromLTWH(0, row + gap, width, height - row - gap)]
+            : [Rect.fromLTWH(0, 0, width, height - row - gap), Rect.fromLTWH(0, height - row, width, row)]);
+      }
+    }
   }
 
   List<Rect>? best;
