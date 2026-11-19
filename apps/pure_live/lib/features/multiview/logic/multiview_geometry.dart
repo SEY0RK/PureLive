@@ -235,10 +235,10 @@ List<Rect>? _squarishCells({
   return best;
 }
 
-/// The two cells of a 1×2 layout. Two equal 16:9 boxes are only one option:
-/// a portrait stream wants a tall column, and a wide picture wants a short
-/// row. Enumerate both splits and the splits that give either stream its own
-/// shape, then keep the one that shows most picture on this canvas.
+/// The two cells of a 1×2 layout. The halves are always equal: a native
+/// split gives one stream its own shape but leaves the other a sliver, and
+/// on a phone the unequal widths read as a broken layout. Pick the equal
+/// split — columns or rows — that shows more picture on this canvas.
 List<Rect>? _dualCells({
   required Size inner,
   required List<double> aspects,
@@ -249,11 +249,10 @@ List<Rect>? _dualCells({
     if (!aspect.isFinite || aspect <= 0) return null;
   }
   final width = inner.width, height = inner.height;
-  // Two cells must share the distortion. Scoring raw visible area alone picks
-  // a 90 % / 10 % split on a 16:9 window — one picture huge, the other a
-  // sliver — because the big cell's pixels dominate the score. A cell may
-  // only take its native shape when the other still gets 35 % of the canvas.
-  final fair = math.min(width, height) * 0.35;
+  // Equal halves only. A "native" column for a 9:16 stream on a 16:9 window
+  // left the other cell 68 % wide; on a phone it was 56 %/44 %. Neither reads
+  // as a 1×2 layout. The wall's height (see WallGeometry.contentHeight) is
+  // what adapts to portrait streams now, not the split ratio.
   final candidates = <List<Rect>>[
     [
       Rect.fromLTWH(0, 0, (width - gap) / 2, height),
@@ -265,30 +264,155 @@ List<Rect>? _dualCells({
     ],
   ];
 
-  for (var i = 0; i < 2; i++) {
-    final aspect = aspects[i];
-    if (aspect < 1) {
-      // A portrait stream first: a full-height column at its own width.
-      final column = height * aspect;
-      if (column >= fair && width - column - gap >= fair) {
-        candidates.add(i == 0
-            ? [Rect.fromLTWH(0, 0, column, height), Rect.fromLTWH(column + gap, 0, width - column - gap, height)]
-            : [Rect.fromLTWH(0, 0, width - column - gap, height), Rect.fromLTWH(width - column, 0, column, height)]);
+  List<Rect>? best;
+  var bestArea = -1.0;
+  for (final cells in candidates) {
+    final area = _visibleArea(cells, aspects);
+    if (area > bestArea) {
+      bestArea = area;
+      best = cells;
+    }
+  }
+  return best;
+}
+
+/// The orders the three other streams can take the three strips of a
+/// candidate. Cheap to enumerate, and it keeps the scorer honest about which
+/// shape belongs in which strip.
+const List<List<int>> _threeSlotOrders = [
+  [0, 1, 2],
+  [0, 2, 1],
+  [1, 0, 2],
+  [1, 2, 0],
+  [2, 0, 1],
+  [2, 1, 0],
+];
+
+/// A phone's immersive/fullscreen canvas is taller than it is wide (aspect
+/// below 0.8). Stretching the 1920×1080 template onto it gives four narrow
+/// strips — every picture lands in a 17–27 % letterbox, which reads as a
+/// brute-force stretch. Compose 1+3 from the canvas itself instead: a full-
+/// width row or a full-height column for the focused picture, the other
+/// three in strips or a 2×2 remainder. Nothing is cropped; the composition
+/// that shows most picture wins.
+List<Rect>? _portraitCells({
+  required Size inner,
+  required List<double> aspects,
+  required int focused,
+  required double gap,
+}) {
+  if (inner.width <= 0 || inner.height <= 0) return null;
+  final others = [for (var i = 0; i < 4; i++) if (i != focused) i];
+  final w = inner.width, h = inner.height;
+  final candidates = <List<Rect>>[];
+
+  void collect(Rect main, Rect rest, {required bool restVertical}) {
+    // Equal shares, shares proportional to the streams' shapes, and their
+    // inverses: a portrait stream wants a narrow column, a landscape one a
+    // short row. The scorer picks whichever fits this canvas.
+    final weights = <List<double>>[
+      [1.0, 1.0, 1.0],
+      [for (final i in others) aspects[i].clamp(0.45, 2.2).toDouble()],
+      [for (final i in others) (1 / aspects[i]).clamp(0.45, 2.2).toDouble()],
+    ];
+    for (final weight in weights) {
+      final strips = _splitStrip(rest, weight, vertical: restVertical, gap: gap);
+      if (strips.length != 3) continue;
+      for (final order in _threeSlotOrders) {
+        final cells = List<Rect?>.filled(4, null);
+        cells[focused] = main;
+        for (var k = 0; k < 3; k++) {
+          cells[others[order[k]]] = strips[k];
+        }
+        if (!cells.contains(null)) candidates.add([for (final rect in cells) rect!]);
       }
-    } else {
-      // A landscape stream first: a full-width row at its own height.
-      final row = width / aspect;
-      if (row >= fair && height - row - gap >= fair) {
-        candidates.add(i == 0
-            ? [Rect.fromLTWH(0, 0, width, row), Rect.fromLTWH(0, row + gap, width, height - row - gap)]
-            : [Rect.fromLTWH(0, 0, width, height - row - gap), Rect.fromLTWH(0, height - row, width, row)]);
+    }
+  }
+
+  // Focused picture as a full-width row: its own shape, clamped so the three
+  // others keep a usable strip. Top and bottom variants are both tried.
+  final rowHeight = (w / aspects[focused]).clamp(h * 0.28, h * 0.82).toDouble();
+  if (h - rowHeight > gap) {
+    collect(
+      Rect.fromLTWH(0, 0, w, rowHeight),
+      Rect.fromLTWH(0, rowHeight + gap, w, h - rowHeight - gap),
+      restVertical: false,
+    );
+    collect(
+      Rect.fromLTWH(0, h - rowHeight, w, rowHeight),
+      Rect.fromLTWH(0, 0, w, h - rowHeight - gap),
+      restVertical: false,
+    );
+  }
+
+  // Focused picture as a full-height column, on either side.
+  final columnWidth = (h * aspects[focused]).clamp(w * 0.34, w * 0.66).toDouble();
+  if (w - columnWidth > gap) {
+    collect(
+      Rect.fromLTWH(0, 0, columnWidth, h),
+      Rect.fromLTWH(columnWidth + gap, 0, w - columnWidth - gap, h),
+      restVertical: true,
+    );
+    collect(
+      Rect.fromLTWH(w - columnWidth, 0, columnWidth, h),
+      Rect.fromLTWH(0, 0, w - columnWidth - gap, h),
+      restVertical: true,
+    );
+  }
+
+  // Four rows, the focused one taking a taller share.
+  for (final weight in [1.4, 1.8, 2.2]) {
+    final rows = _splitStrip(Rect.fromLTWH(0, 0, w, h), [weight, 1, 1, 1], vertical: true, gap: gap);
+    if (rows.length != 4) continue;
+    final cells = List<Rect?>.filled(4, null);
+    cells[focused] = rows[0];
+    for (var k = 0; k < 3; k++) {
+      cells[others[k]] = rows[k + 1];
+    }
+    candidates.add([for (final rect in cells) rect!]);
+  }
+
+  // A side column for the focused picture and a 2×2 remainder with one empty
+  // slot — the best shape for three portraits.
+  final sideWidth = (h * aspects[focused]).clamp(w * 0.34, w * 0.66).toDouble();
+  final rest = Rect.fromLTWH(sideWidth + gap, 0, w - sideWidth - gap, h);
+  if (rest.width > gap) {
+    final halfW = (rest.width - gap) / 2;
+    final halfH = (rest.height - gap) / 2;
+    final grid = [
+      Rect.fromLTWH(rest.left, rest.top, halfW, halfH),
+      Rect.fromLTWH(rest.left + halfW + gap, rest.top, halfW, halfH),
+      Rect.fromLTWH(rest.left, rest.top + halfH + gap, halfW, halfH),
+    ];
+    for (final order in _threeSlotOrders) {
+      final cells = List<Rect?>.filled(4, null);
+      cells[focused] = Rect.fromLTWH(0, 0, sideWidth, h);
+      for (var k = 0; k < 3; k++) {
+        cells[others[order[k]]] = grid[k];
       }
+      if (!cells.contains(null)) candidates.add([for (final rect in cells) rect!]);
     }
   }
 
   List<Rect>? best;
   var bestArea = -1.0;
   for (final cells in candidates) {
+    var usable = true;
+    for (final rect in cells) {
+      if (rect.width < w * 0.12 || rect.height < h * 0.05) {
+        usable = false;
+        break;
+      }
+    }
+    if (!usable) continue;
+    final mainArea = cells[focused].width * cells[focused].height;
+    var largestOther = 0.0;
+    for (final i in others) {
+      largestOther = math.max(largestOther, cells[i].width * cells[i].height);
+    }
+    // On a tall canvas a mixed set cannot give the main cell four times the
+    // area of every other one; keep it clearly, not hugely, bigger.
+    if (mainArea < largestOther * 1.05) continue;
     final area = _visibleArea(cells, aspects);
     if (area > bestArea) {
       bestArea = area;
@@ -316,7 +440,13 @@ List<Rect>? _dualCells({
 
   // A foldable's inner screen, a tablet in square-ish proportions and a
   // rotated phone all need the canvas itself to decide where the cells go.
+  // A phone's immersive screen is the opposite extreme: taller than wide,
+  // and the design template would only stretch every slot into a sliver.
   final canvasAspect = inner.width / inner.height;
+  if (canvasAspect < 0.8) {
+    final portrait = _portraitCells(inner: inner, aspects: aspects, focused: focused, gap: gap);
+    if (portrait != null) return (portrait, inner.height, focused);
+  }
   if (canvasAspect >= 0.8 && canvasAspect <= 1.5) {
     final squarish = _squarishCells(inner: inner, aspects: aspects, focused: focused, gap: gap);
     if (squarish != null) return (squarish, inner.height, focused);
@@ -524,5 +654,19 @@ final class WallGeometry {
       right = math.max(right, rect.right);
     }
     return left.isFinite ? right - left : 0;
+  }
+
+  /// The height the cells actually take. A portrait screen uses this to size
+  /// the wall by its streams instead of by the old fixed 16:9 cell shape.
+  double get contentHeight {
+    final rects = [...cells, ?rail];
+    if (rects.isEmpty) return 0;
+    var top = double.infinity;
+    var bottom = 0.0;
+    for (final rect in rects) {
+      top = math.min(top, rect.top);
+      bottom = math.max(bottom, rect.bottom);
+    }
+    return bottom - top;
   }
 }
