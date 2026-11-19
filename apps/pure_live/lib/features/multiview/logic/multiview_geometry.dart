@@ -329,10 +329,14 @@ List<Rect>? _portraitCells({
     }
   }
 
-  // Focused picture as a full-width row: its own shape, clamped so the three
-  // others keep a usable strip. Top and bottom variants are both tried.
-  final rowHeight = (w / aspects[focused]).clamp(h * 0.28, h * 0.82).toDouble();
-  if (h - rowHeight > gap) {
+  // Focused picture as a full-width row. Its own shape is one option, but on
+  // a tall canvas the three others often need a taller strip than that
+  // leaves, so a range of heights is tried (top and bottom variants both).
+  for (final share in [0.28, 0.38, 0.48, 0.58, 0.68, 0.78]) {
+    final rowHeight = share == 0.28
+        ? (w / aspects[focused]).clamp(h * share, h * 0.82).toDouble()
+        : h * share;
+    if (h - rowHeight <= gap) continue;
     collect(
       Rect.fromLTWH(0, 0, w, rowHeight),
       Rect.fromLTWH(0, rowHeight + gap, w, h - rowHeight - gap),
@@ -345,9 +349,11 @@ List<Rect>? _portraitCells({
     );
   }
 
-  // Focused picture as a full-height column, on either side.
-  final columnWidth = (h * aspects[focused]).clamp(w * 0.34, w * 0.66).toDouble();
-  if (w - columnWidth > gap) {
+  // Focused picture as a full-height column, on either side, at several
+  // widths: the strip's shape changes which streams can use it.
+  for (final share in [0.34, 0.42, 0.50, 0.58, 0.66]) {
+    final columnWidth = w * share;
+    if (w - columnWidth <= gap) continue;
     collect(
       Rect.fromLTWH(0, 0, columnWidth, h),
       Rect.fromLTWH(columnWidth + gap, 0, w - columnWidth - gap, h),
@@ -394,32 +400,46 @@ List<Rect>? _portraitCells({
     }
   }
 
-  List<Rect>? best;
-  var bestArea = -1.0;
-  for (final cells in candidates) {
-    var usable = true;
-    for (final rect in cells) {
-      if (rect.width < w * 0.12 || rect.height < h * 0.05) {
-        usable = false;
-        break;
+  double fit(Rect rect, double aspect) {
+    final shape = rect.width / rect.height;
+    return math.min(aspect / shape, shape / aspect);
+  }
+
+  // A raw area score alone put a 9:16 stream in a 92-pixel column and called
+  // it a win: its letterbox was 28 % of the cell. Demand that every picture
+  // gets at least 30 % of its own shape before comparing candidates. If no
+  // composition can do that (e.g. two landscapes among three portraits),
+  // fall back to the area winner — an extreme canvas has no fair answer.
+  for (final floor in [0.30, 0.0]) {
+    List<Rect>? best;
+    var bestArea = -1.0;
+    for (final cells in candidates) {
+      var usable = true;
+      for (var i = 0; i < 4; i++) {
+        final rect = cells[i];
+        if (rect.width < w * 0.12 || rect.height < h * 0.05 || fit(rect, aspects[i]) < floor) {
+          usable = false;
+          break;
+        }
+      }
+      if (!usable) continue;
+      final mainArea = cells[focused].width * cells[focused].height;
+      var largestOther = 0.0;
+      for (final i in others) {
+        largestOther = math.max(largestOther, cells[i].width * cells[i].height);
+      }
+      // On a tall canvas a mixed set cannot give the main cell four times the
+      // area of every other one; keep it clearly, not hugely, bigger.
+      if (mainArea < largestOther * 1.05) continue;
+      final area = _visibleArea(cells, aspects);
+      if (area > bestArea) {
+        bestArea = area;
+        best = cells;
       }
     }
-    if (!usable) continue;
-    final mainArea = cells[focused].width * cells[focused].height;
-    var largestOther = 0.0;
-    for (final i in others) {
-      largestOther = math.max(largestOther, cells[i].width * cells[i].height);
-    }
-    // On a tall canvas a mixed set cannot give the main cell four times the
-    // area of every other one; keep it clearly, not hugely, bigger.
-    if (mainArea < largestOther * 1.05) continue;
-    final area = _visibleArea(cells, aspects);
-    if (area > bestArea) {
-      bestArea = area;
-      best = cells;
-    }
+    if (best != null) return best;
   }
-  return best;
+  return null;
 }
 
 /// The template's cells for [aspects], in cell order, the height the four
