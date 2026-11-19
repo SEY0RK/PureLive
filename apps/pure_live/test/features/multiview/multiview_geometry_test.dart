@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -145,6 +146,26 @@ void main() {
     expect(main.width / main.height, closeTo(9 / 16, 0.08));
     for (final i in [0, 2, 3]) {
       expect(main.width * main.height, greaterThan(wall.cells[i].width * wall.cells[i].height));
+    }
+  });
+
+  test('immersive portrait 1+3 keeps every cell usable with a mixed set', () {
+    const aspects = [9 / 16, 16 / 9, 16 / 9, 9 / 16];
+    final wall = WallGeometry.of(
+      MultiviewLayout.focus,
+      width: 480,
+      height: 1040,
+      aspects: aspects,
+    );
+    expect(wall.cells, hasLength(4));
+    for (var i = 0; i < 4; i++) {
+      final rect = wall.cells[i];
+      final shape = rect.width / rect.height;
+      final fit = math.min(aspects[i] / shape, shape / aspects[i]);
+      expect(fit, greaterThan(0.29), reason: 'cell $i: $rect');
+      if (aspects[i] > 1) {
+        expect(rect.width, greaterThan(480 * 0.16), reason: 'landscape cell $i: $rect');
+      }
     }
   });
 }
