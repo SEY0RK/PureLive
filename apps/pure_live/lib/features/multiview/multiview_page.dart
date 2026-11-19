@@ -755,8 +755,21 @@ class _MultiviewPageState extends ConsumerState<MultiviewPage> {
   /// c2: the 16:9 cells above, as tall as the width wants (at most half the
   /// page), the selected cell's controls and the picker below.
   Widget _portraitBody(BoxConstraints box) {
-    final natural = WallGeometry.of(_controller.layout, width: box.maxWidth).size.height;
-    final height = math.min(natural, box.maxHeight * 0.5);
+    // The wall used to be sized by fixed 16:9 cells, so a 1×2 of two portrait
+    // streams got a short, wide box and letterboxed both. Give the solver the
+    // real half-page box and the streams' shapes, then take only the height
+    // the cells need.
+    final limit = box.maxHeight * 0.5;
+    final natural = WallGeometry.of(
+      _controller.layout,
+      width: box.maxWidth,
+      height: limit,
+      gap: 3,
+      padding: 3,
+      aspects: [for (final cell in _controller.cells) cell.layoutAspect],
+      focused: _controller.focusedIndex,
+    ).contentHeight;
+    final height = math.min(natural, limit);
     return Column(
       children: [
         _toolbar(icons: false),
